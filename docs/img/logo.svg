@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 60" fill="none" role="img" aria-label="rook">
+  <g transform="translate(4,5)" fill="#f0543c">
+    <rect x="9" y="6" width="6.5" height="10" rx="1"/>
+    <rect x="20.75" y="6" width="6.5" height="10" rx="1"/>
+    <rect x="32.5" y="6" width="6.5" height="10" rx="1"/>
+    <path d="M9 13 H39 V22 L33.5 26.5 V34 L40 39.5 V43 H8 V39.5 L14.5 34 V26.5 L9 22 Z"/>
+    <circle cx="24" cy="21" r="2.3" fill="#0f1012"/>
+  </g>
+  <text x="62" y="42" font-family="'Helvetica Neue','Segoe UI',Arial,sans-serif" font-size="40" font-weight="800" fill="#f0543c" letter-spacing="-1.5">rook</text>
+</svg>

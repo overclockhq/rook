@@ -1,0 +1,68 @@
+# GoReleaser config — cross-compiles rook (pure Go), publishes a GitHub Release
+# with binaries + checksums, and updates the Homebrew tap. Runs on a `v*` tag
+# via .github/workflows/release.yml.
+version: 2
+
+project_name: rook
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: rook
+    main: ./cmd/rook
+    binary: rook
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: rook
+    # matches install.sh: rook_<os>_<arch>.tar.gz
+    name_template: "rook_{{ .Os }}_{{ .Arch }}"
+    formats: ["tar.gz"]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: overclockhq
+    name: rook
+  draft: false
+  prerelease: auto
+  name_template: "rook {{ .Tag }}"
+
+brews:
+  - name: rook
+    # only publish the formula when the tap token is configured — otherwise the
+    # release still succeeds (binaries, curl|sh, go install), brew is just skipped
+    skip_upload: '{{ if eq .Env.HOMEBREW_TAP_GITHUB_TOKEN "" }}true{{ else }}false{{ end }}'
+    repository:
+      owner: overclockhq
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/overclockhq/rook"
+    description: "Local dashboard to launch, watch, and drive AI coding agents"
+    license: "MIT"
+    # tmux powers the drive/terminal features; rook still runs (read-only) without it
+    dependencies:
+      - name: tmux
+        type: optional
+    install: |
+      bin.install "rook"
+    test: |
+      system "#{bin}/rook", "--version"

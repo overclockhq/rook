@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>rook · local</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=7" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#F0543C" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="rook" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <script>try{var t=localStorage.getItem('apTheme');if(t&&t!=='graphite')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+  <link rel="stylesheet" href="/vendor/xterm.css" />
+  <link rel="stylesheet" href="/vendor/highlight.css" />
+  <link rel="stylesheet" href="/board.css?v=112" />
+  <link rel="stylesheet" href="/charts.css?v=112" />
+  <link rel="stylesheet" href="/diffview.css?v=112" />
+  <link rel="stylesheet" href="style.css?v=112" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="favicon.svg?v=7" class="logo" alt="rook" width="30" height="30" />
+      <h1>rook <span class="muted">· local</span></h1>
+    </div>
+    <button id="cmdBar" class="cmdbar" title="Search sessions, jump to a view, or run a command">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span>Search or run…</span>
+      <kbd>⌘K</kbd>
+    </button>
+    <div class="topstats">
+      <button id="helpBtn" class="bell icobtn" title="What is rook? Status legend"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></button>
+      <button id="settingsBtn" class="bell" title="Settings — theme, alerts, phone push, caps"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
+      <span id="activeCount" class="pill">– active</span>
+      <span id="clock" class="muted mono"></span>
+      <span id="connDot" class="conn" title="connection"></span>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab" data-page="home">Home</button>
+    <button class="tab" data-page="board">Board</button>
+    <button class="tab" data-page="sessions">Sessions</button>
+    <button class="tab" data-page="term" hidden>Terminal</button>
+    <button class="tab" data-page="usage">Usage</button>
+    <button class="tab" data-page="dev">Dev servers</button>
+    <button class="tab" data-page="workspace">Workspace</button>
+    <button class="tab" data-page="audit">Audit</button>
+    <button class="tab" data-page="github">GitHub</button>
+    <button class="tab" data-page="summaries">Summaries</button>
+  </nav>
+
+  <!-- global alerts (visible on every page) -->
+  <div id="flash" class="flash"></div>
+  <div id="stickies" class="stickies"></div>
+  <div id="notices" class="notices"></div>
+
+  <!-- Settings modal -->
+  <div id="settings" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><h2>Settings</h2><button id="settingsClose" class="btn ghost"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="modal-body">
+        <label class="set-row"><span>Theme</span>
+          <select id="setTheme" class="sf-sel"><option value="graphite">Graphite (dark)</option><option value="light">Light</option><option value="coffee">Coffee (warm)</option><option value="coffee-light">Coffee (light)</option></select></label>
+        <label class="set-row"><span>Desktop alerts</span>
+          <button id="setAlerts" class="btn">…</button></label>
+        <label class="set-row"><span>Phone push (ntfy topic URL)</span>
+          <input id="setNtfy" class="sf-search" placeholder="https://ntfy.sh/your-topic" /></label>
+        <div class="set-row"><span>Usage caps (millions of tokens)</span>
+          <span><input id="setCap5" class="sf-search cap" placeholder="5h" /> <input id="setCap7" class="sf-search cap" placeholder="weekly" /></span></div>
+        <div class="set-sep">Daily summary defaults</div>
+        <label class="set-row"><span>Author</span><input id="setSumAuthor" class="sf-search" placeholder="github-username" /></label>
+        <label class="set-row"><span>Repos</span><input id="setSumRepos" class="sf-search" placeholder="owner/repo, owner/repo2" /></label>
+        <label class="set-row"><span>Working directory</span><input id="setSumCwd" class="sf-search" placeholder="a local repo path" /></label>
+        <label class="set-row"><span>Auto-run daily at</span><span><input id="setSumSchedule" type="time" class="sf-search cap" /> <span class="muted" style="font-size:11px">blank = off</span></span></label>
+        <div class="set-sep">Integrations (all optional)</div>
+        <label class="set-row"><span>Allow write actions</span><span><input type="checkbox" id="setAllowWrite" /> <span class="muted" style="font-size:11px">enables Open PR / merge from rook</span></span></label>
+        <label class="set-row"><span>Open in editor</span>
+          <select id="setEditor" class="sf-sel"><option value="">off</option><option value="code">VS Code</option><option value="cursor">Cursor</option><option value="idea">IntelliJ</option><option value="zed">Zed</option><option value="subl">Sublime</option></select></label>
+        <label class="set-row"><span>Slack webhook</span><input id="setSlack" class="sf-search" placeholder="https://hooks.slack.com/…" /></label>
+        <label class="set-row"><span>Discord webhook</span><input id="setDiscord" class="sf-search" placeholder="https://discord.com/api/webhooks/…" /></label>
+        <label class="set-row"><span>Linear API key</span><input id="setLinear" class="sf-search" placeholder="lin_api_…" /></label>
+        <label class="set-row"><span>Jira base URL</span><input id="setJiraBase" class="sf-search" placeholder="https://acme.atlassian.net" /></label>
+        <label class="set-row"><span>Jira email</span><input id="setJiraEmail" class="sf-search" placeholder="you@acme.com" /></label>
+        <label class="set-row"><span>Jira API token</span><input id="setJiraToken" class="sf-search" placeholder="Jira API token" /></label>
+        <div class="set-actions"><button id="setSave" class="btn allow">Save</button><button id="setTestChat" class="btn">Test chat</button><span class="muted" style="font-size:11px">saved locally + on this machine</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help modal -->
+  <div id="help" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><h2>What is rook?</h2><button id="helpClose" class="btn ghost"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="modal-body">
+        <p class="muted" style="margin-top:0">rook is mission control for your AI coding agents — watch every session, get pulled in when one needs you, and drive them. All local, read-only to GitHub.</p>
+        <div class="legend">
+          <div><span class="sdot s-busy"></span> <b>busy</b> — working now</div>
+          <div><span class="sdot s-waiting"></span> <b>waiting</b> — needs your input</div>
+          <div><span class="sdot s-idle"></span> <b>idle</b> — waiting for a prompt</div>
+          <div><span class="sdot s-shell"></span> <b>shell</b> — in a shell command</div>
+          <div><span class="sdot s-dead"></span> <b>dead</b> — process exited</div>
+        </div>
+        <p class="muted" style="font-size:12px">Tabs: <b>Sessions</b> (all agents) · <b>Usage</b> (5h/weekly + trends) · <b>Dev servers</b> · <b>Workspace</b> (skills/plugins/MCP) · <b>Audit</b> (commands + files changed) · <b>GitHub</b> (browse + spawn agents on issues/PRs).</p>
+        <p class="muted" style="font-size:12px">Control features (Allow/Deny, live Terminal, Spawn) run agents in <b>tmux</b> so rook can drive them.</p>
+        <p class="muted" style="font-size:12px"><b>Shortcuts</b> (on the selected waiting agent): <kbd>a</kbd> allow · <kbd>d</kbd> deny · <kbd>1</kbd>–<kbd>9</kbd> menu option.</p>
+        <p class="muted" style="font-size:12px"><b>Agent support:</b> Claude Code is fully supported. Codex, Aider &amp; Gemini are <b>β</b> — detection is best-effort and unverified against real session data (marked with a <b>β</b> chip).</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Command palette (⌘K) -->
+  <div id="palette" class="modal pal-modal" hidden>
+    <div class="pal-card">
+      <input id="palInput" class="pal-input" placeholder="Search sessions, transcripts, or run a command…" autocomplete="off" spellcheck="false" />
+      <div id="palList" class="pal-list"></div>
+      <div class="pal-foot muted">↑↓ move · ↵ select · esc close</div>
+    </div>
+  </div>
+
+  <!-- Diff review modal -->
+  <div id="diff" class="modal" hidden>
+    <div class="modal-card diff-card">
+      <div class="modal-head">
+        <h2>Review changes <span id="diffTitle" class="muted"></span></h2>
+        <span id="diffMeta" class="diff-meta"></span>
+        <button id="diffReview" class="btn" title="Spawn a read-only review agent on these changes">Review with agent</button>
+        <button id="diffVerify" class="btn" title="Run this project's build/test command">Run tests</button>
+        <button id="diffEditor" class="btn" title="Open this worktree in your editor">Open in editor</button>
+        <button id="diffPR" class="btn allow" title="Open a pull request from this branch (needs write actions enabled)">Open PR</button>
+        <button id="diffClose" class="btn ghost"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="diff-split">
+        <div id="diffFiles" class="diff-files"></div>
+        <div id="diffBody" class="diff-body"><p class="empty">loading…</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Launch session modal -->
+  <div id="launch" class="modal" hidden>
+    <div class="modal-card lg-card">
+      <div class="modal-head"><h2>Launch a session</h2><button id="lgClose" class="btn ghost"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="modal-body">
+        <label class="lg-label">Repository</label>
+        <div class="lg-repo">
+          <input id="lgRepoSearch" class="sf-search" placeholder="search repos, or paste an absolute path…" autocomplete="off" spellcheck="false" />
+          <div id="lgRepoList" class="lg-repolist"></div>
+        </div>
+
+        <label class="lg-label">Task <span class="muted" style="font-weight:400">— what should the agent do?</span></label>
+        <textarea id="lgPrompt" class="lg-prompt" placeholder="e.g. fix the summary dedup so the same PR never appears twice; run tests; open a PR"></textarea>
+        <div class="lg-chips">
+          <button class="lg-chip" data-preset="review">Review PR / branch</button>
+          <button class="lg-chip" data-preset="fix">Fix an issue</button>
+          <button class="lg-chip" data-preset="tests">Write tests</button>
+          <button class="lg-chip" data-preset="deps">Update deps</button>
+        </div>
+
+        <div class="lg-grid">
+          <div>
+            <label class="lg-label">Agent</label>
+            <select id="lgAgent" class="sf-sel lg-full">
+              <option value="claude">Claude Code</option>
+              <option value="codex">Codex · β</option>
+              <option value="aider">Aider · β</option>
+              <option value="gemini">Gemini · β</option>
+            </select>
+          </div>
+          <div>
+            <label class="lg-label">Session name</label>
+            <input id="lgName" class="sf-search lg-full" placeholder="auto from task" autocomplete="off" spellcheck="false" />
+          </div>
+        </div>
+
+        <label class="lg-toggle"><input type="checkbox" id="lgWorktree" checked />
+          <span><b>Isolate in a git worktree</b> <span class="muted">— agent works on its own checkout; your branch and files stay untouched</span></span></label>
+
+        <div id="lgClone" class="spawn-clone" hidden>
+          <span class="muted">No local clone of <b id="lgCloneRepo"></b>? Clone into:</span>
+          <div class="spawn-row">
+            <input id="lgCloneDir" class="sf-search" placeholder="parent directory (e.g. /Users/you/repos)" />
+            <button id="lgCloneGo" class="btn">Clone</button>
+          </div>
+        </div>
+
+        <div class="lg-actions">
+          <span id="lgHint" class="muted lg-hint">launches in tmux · drops you into the live terminal</span>
+          <span style="flex:1"></span>
+          <button id="lgCancel" class="btn ghost">Cancel</button>
+          <button id="lgGo" class="btn allow">Launch ▶</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daily summary modal -->
+  <div id="summary" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><h2>Daily summary</h2><button id="summaryClose" class="btn ghost"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="modal-body">
+        <p class="muted" style="margin-top:0">Spawns a Claude agent that pulls your GitHub PRs / issues / commits / reviews and Claude session activity for the window, then writes a structured summary. Watch + drive it in the Terminal.</p>
+        <div class="set-row"><span>Date range</span>
+          <span style="display:flex;gap:8px"><input id="sumStart" type="date" class="sf-search cap" /> <input id="sumEnd" type="date" class="sf-search cap" /></span></div>
+        <div class="sum-presets">
+          <button class="btn preset" data-preset="today">Today</button>
+          <button class="btn preset" data-preset="yesterday">Yesterday</button>
+          <button class="btn preset" data-preset="week">This week</button>
+          <button class="btn preset" data-preset="month">This month</button>
+        </div>
+        <label class="set-row"><span>GitHub author</span>
+          <input id="sumAuthor" class="sf-search" list="sumAuthorList" placeholder="github-username" /><datalist id="sumAuthorList"></datalist></label>
+        <label class="set-row"><span>Repos (comma-separated)</span>
+          <input id="sumRepos" class="sf-search" list="sumRepoList" placeholder="pick or type owner/repo, owner/repo2" /><datalist id="sumRepoList"></datalist></label>
+        <label class="set-row"><span>Working directory</span>
+          <input id="sumCwd" class="sf-search" list="cwdList" placeholder="a local repo path (agent runs gh + reads ~/.claude)" /></label>
+        <div class="set-actions"><button id="sumGo" class="btn allow">Generate summary</button><span class="muted" style="font-size:11px">runs the full flow in a spawned agent</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAGE: Home (command center) -->
+  <div class="page" id="page-home">
+    <section class="home">
+      <div class="home-quickbar">
+        <div class="hq-title">
+          <h2>Command center</h2>
+          <span class="muted">everything that needs you, in one place</span>
+        </div>
+        <div class="hq-actions">
+          <button id="homeSummary2" class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg> Daily summary</button>
+          <button id="homeSpawn" class="btn allow"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Spawn agent</button>
+          <button id="homeGithub" class="btn">Work a GitHub issue <span aria-hidden="true">→</span></button>
+        </div>
+      </div>
+      <div class="hsum" id="homeSummary"></div>
+
+      <!-- first-run welcome (shown when no agents are detected yet) -->
+      <div id="homeHero" class="home-hero" hidden>
+        <img src="favicon.svg?v=7" class="hero-logo" alt="rook" width="56" height="56" />
+        <h3>Welcome to rook</h3>
+        <p>Mission control for your AI coding agents. Watch every session, get pulled in the moment one needs you, and drive them — all local, GitHub read-only.</p>
+        <div class="hero-steps">
+          <div class="hstep"><span class="hstep-n">1</span><div><b>Spawn your first agent</b><span>Launch Claude, Codex, Aider or Gemini in a tmux session rook can watch.</span></div><button id="heroSpawn" class="btn allow">Spawn agent</button></div>
+          <div class="hstep"><span class="hstep-n">2</span><div><b>Or hand off a GitHub issue</b><span>Pick an issue or PR and rook spawns an agent on it, then drops you into its terminal.</span></div><button id="heroGithub" class="btn">Open GitHub</button></div>
+          <div class="hstep"><span class="hstep-n">3</span><div><b>Turn on alerts</b><span>Get a desktop or phone ping the instant an agent needs your input.</span></div><button id="heroAlerts" class="btn">Settings</button></div>
+        </div>
+        <p class="hero-foot muted">Already running agents elsewhere? They'll appear here automatically once rook sees their session files.</p>
+      </div>
+
+      <div class="home-sections">
+        <section class="hsec needs">
+          <div class="hsec-h"><span class="hsec-dot s-waiting"></span> Needs you <span id="homeNeedN" class="muted"></span></div>
+          <div id="homeNeeds" class="hsec-body"></div>
+        </section>
+        <section class="hsec">
+          <div class="hsec-h"><span class="hsec-dot s-busy"></span> Working now <span id="homeWorkN" class="muted"></span></div>
+          <div id="homeWorking" class="hsec-body"></div>
+        </section>
+        <section class="hsec">
+          <div class="hsec-h"><span class="hsec-dot s-idle"></span> Idle / recently done <span id="homeIdleN" class="muted"></span></div>
+          <div id="homeIdle" class="hsec-body"></div>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <!-- PAGE: Board -->
+  <div class="page" id="page-board">
+    <div class="board-head">
+      <div><h2 style="margin:0">Board</h2><span class="muted" style="font-size:12px">every agent by state — act without hunting</span></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="chainBtn" class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New chain</button>
+      </div>
+    </div>
+    <div id="board" class="board"></div>
+  </div>
+
+  <!-- New chain modal -->
+  <div id="chain" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><h2>New task chain</h2><button id="chainClose" class="btn ghost"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="modal-body">
+        <p class="muted" style="margin-top:0;font-size:12.5px">Agents run one after another in the same working tree — each starts when the previous one finishes (auto hand-off).</p>
+        <label class="lg-label">Title</label>
+        <input id="chTitle" class="sf-search lg-full" placeholder="e.g. build + test + docs" />
+        <label class="lg-label">Working directory</label>
+        <input id="chCwd" class="sf-search lg-full" list="cwdList" placeholder="a local repo path" />
+        <label class="lg-label">Steps — one task per line</label>
+        <textarea id="chSteps" class="lg-prompt" style="min-height:110px" placeholder="implement the feature on a new branch&#10;write tests for the new code and make them pass&#10;update the docs and open a PR"></textarea>
+        <label class="lg-toggle"><input type="checkbox" id="chWorktree" checked />
+          <span><b>Isolate the whole chain in one git worktree</b></span></label>
+        <div class="lg-actions"><span style="flex:1"></span><button id="chCancel" class="btn ghost">Cancel</button><button id="chGo" class="btn allow">Start chain ▶</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAGE: Sessions -->
+  <div class="page" id="page-sessions">
+    <main class="grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Sessions</h2>
+          <div class="dev-head-right">
+            <button id="spawnBtn" class="bell" title="Launch a new agent in tmux"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Spawn agent</button>
+            <span id="sessionCount" class="muted"></span>
+          </div>
+        </div>
+        <div id="spawnForm" class="spawnform" hidden>
+          <div class="spawn-row">
+            <input id="spName" class="sf-search" placeholder="session name (e.g. fix-123)" />
+            <select id="spAgent" class="sf-sel">
+              <option value="claude">claude</option>
+              <option value="codex">codex</option>
+              <option value="aider">aider</option>
+              <option value="gemini">gemini</option>
+            </select>
+          </div>
+          <input id="spCwd" class="sf-search" list="cwdList" placeholder="working directory (pick an existing clone or type an absolute path)" />
+          <datalist id="cwdList"></datalist>
+          <select id="spPreset" class="sf-sel" title="prompt preset">
+            <option value="">Preset: custom…</option>
+            <option value="review">Review PR / branch</option>
+            <option value="fix">Fix an issue</option>
+            <option value="tests">Write tests</option>
+            <option value="deps">Update dependencies</option>
+          </select>
+          <div id="spClone" class="spawn-clone" hidden>
+            <span class="muted">No local clone? Clone <b id="spCloneRepo"></b> into:</span>
+            <div class="spawn-row">
+              <input id="spCloneDir" class="sf-search" placeholder="parent directory (e.g. /Users/you/repos)" />
+              <button id="spCloneGo" class="btn">Clone</button>
+            </div>
+          </div>
+          <textarea id="spPrompt" class="spawn-prompt" placeholder="initial prompt (optional)"></textarea>
+          <div class="spawn-actions">
+            <button id="spGo" class="btn allow">Spawn</button>
+            <button id="spCancel" class="btn ghost">Cancel</button>
+            <span class="muted" style="font-size:11px">launches in tmux so rook can watch + drive it</span>
+          </div>
+        </div>
+        <div class="sfilter">
+          <input id="sSearch" class="sf-search" placeholder="search sessions…" />
+          <select id="sStatus" class="sf-sel">
+            <option value="all">all</option>
+            <option value="active">active</option>
+            <option value="waiting">waiting</option>
+            <option value="busy">busy</option>
+            <option value="idle">idle</option>
+          </select>
+          <select id="sSort" class="sf-sel">
+            <option value="recent">recent</option>
+            <option value="tokens">tokens</option>
+            <option value="cost">cost</option>
+            <option value="project">project</option>
+          </select>
+          <label class="sf-chk"><input type="checkbox" id="sHideDead" checked /> hide dead</label>
+        </div>
+        <ul id="sessions" class="sessions"></ul>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Tool calls</h2>
+          <span id="detailTitle" class="muted"></span>
+        </div>
+        <div id="detail" class="detail">
+          <p class="empty">Select a session to see its tool-call timeline.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- PAGE: Terminal (multi-session tabs) -->
+  <div class="page" id="page-term">
+    <section class="panel termpage">
+      <div class="term-tabs" id="termTabs"></div>
+      <div class="panel-head term-toolbar">
+        <h2 id="termTitle">Terminal</h2>
+        <div class="dev-head-right term-ctl">
+          <button id="tcAllow" class="btn allow" title="Send Enter (accept)">Allow</button>
+          <button id="tcDeny" class="btn danger" title="Send Escape (cancel)">Deny</button>
+          <button class="btn tc-key" data-key="1" title="Menu option 1">1</button>
+          <button class="btn tc-key" data-key="2" title="Menu option 2">2</button>
+          <button class="btn tc-key" data-key="3" title="Menu option 3">3</button>
+          <button id="termInterrupt" class="btn" title="Send Ctrl-C"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg> Interrupt</button>
+          <button id="termKill" class="btn danger" title="Stop this agent">Stop</button>
+        </div>
+      </div>
+      <div id="termMount" class="term-mount"></div>
+    </section>
+  </div>
+
+  <!-- PAGE: Usage -->
+  <div class="page" id="page-usage">
+    <section class="windows" id="windows"></section>
+
+    <section class="panel usagepanel">
+      <div class="panel-head">
+        <h2 id="usageTitle">Usage by agent</h2>
+        <div class="dev-head-right">
+          <div class="tmetric" id="ugroupToggle">
+            <button class="tm-btn on" data-ugroup="agent">by agent</button>
+            <button class="tm-btn" data-ugroup="project">by project</button>
+          </div>
+          <div class="tmetric" id="uwinToggle">
+            <button class="tm-btn" data-uwin="tokens5h">5h</button>
+            <button class="tm-btn on" data-uwin="tokens7d">7d</button>
+          </div>
+          <button id="usageLink" class="bell" title="Open your real Claude usage limits (session % + weekly)"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg> Claude usage limits</button>
+        </div>
+      </div>
+      <p class="usagenote muted">Session &amp; weekly limits are account-wide (shared by all agents). Live % + reset live on Claude's servers — open them with the button. Below is each agent's share of the local token usage.</p>
+      <div id="usage" class="usage"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Cost breakdown</h2><span id="costTotal" class="muted"></span></div>
+      <div id="costBreakdown" class="cost-wrap"><p class="empty">loading…</p></div>
+    </section>
+
+    <section class="panel trendpanel">
+      <div class="panel-head">
+        <h2>Activity · last 30 days</h2>
+        <div class="tmetric">
+          <button class="tm-btn on" data-metric="messages">messages</button>
+          <button class="tm-btn" data-metric="tokens">tokens</button>
+          <button class="tm-btn" data-metric="toolCalls">tool calls</button>
+        </div>
+      </div>
+      <div id="trend" class="trend"></div>
+    </section>
+  </div>
+
+  <!-- PAGE: Dev servers -->
+  <div class="page" id="page-dev">
+    <section class="panel devpanel">
+      <div class="panel-head">
+        <h2>Dev servers</h2>
+        <div class="dev-head-right">
+          <span id="devBulk" class="devbulk"></span>
+          <span id="devCount" class="muted"></span>
+        </div>
+      </div>
+      <table class="devservers">
+        <thead>
+          <tr>
+            <th class="cbcol"><input type="checkbox" id="devAll" title="select all" /></th>
+            <th>Port</th><th>Command</th><th>Runtime</th><th>Project</th><th>PID</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="devservers"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <!-- PAGE: Workspace -->
+  <div class="page" id="page-workspace">
+    <section class="panel envpanel">
+      <div class="panel-head">
+        <h2>Workspace</h2>
+        <span class="muted">skills · plugins · MCP servers</span>
+      </div>
+      <div class="envgrid">
+        <div class="envcol">
+          <h3>Skills <span id="skillCount" class="muted"></span></h3>
+          <div id="skills" class="chips"></div>
+        </div>
+        <div class="envcol">
+          <h3>Plugins <span id="pluginCount" class="muted"></span></h3>
+          <div id="plugins" class="chips"></div>
+        </div>
+        <div class="envcol">
+          <h3>MCP servers <span id="mcpCount" class="muted"></span></h3>
+          <div id="mcp" class="chips"></div>
+        </div>
+      </div>
+    </section>
+    <section class="panel" style="margin:16px 22px">
+      <div class="panel-head"><h2>Agent worktrees</h2>
+        <div class="dev-head-right"><button id="wtRefresh" class="bell" title="Refresh"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15A9 9 0 1 1 5.64 5.64"/></svg></button><span id="wtBulk" class="devbulk"></span><span id="wtCount" class="muted"></span></div>
+      </div>
+      <div id="worktrees" class="wtlist"><p class="empty">No agent worktrees.</p></div>
+    </section>
+    <section class="panel" style="margin:16px 22px">
+      <div class="panel-head"><h2>Claude Code hooks</h2>
+        <div class="dev-head-right"><span id="hkStatus" class="muted"></span></div>
+      </div>
+      <div class="hk-body">
+        <p class="muted" style="margin-top:0;font-size:12.5px">Let Claude Code push events to rook in real time (instant notifications) and let rook block clearly-destructive commands before they run. Installs a wrapper into <span class="mono">~/.claude/settings.json</span>; your other hooks are preserved.</p>
+        <div class="hk-actions">
+          <button id="hkInstall" class="btn allow">Install hooks</button>
+          <button id="hkRemove" class="btn danger" hidden>Remove hooks</button>
+          <label class="lg-toggle" style="margin:0"><input type="checkbox" id="hkGate" />
+            <span><b>Block destructive commands</b> <span class="muted">— deny rm -rf on ~ or /, force-push to main, DROP/TRUNCATE, raw-disk writes</span></span></label>
+        </div>
+        <div class="hk-actions" style="margin-top:-4px">
+          <label class="lg-toggle" style="margin:0"><input type="checkbox" id="hkAutoReview" />
+            <span><b>Auto-review on finish</b> <span class="muted">— when a session ends with changes, spawn a read-only reviewer</span></span></label>
+          <label class="lg-toggle" style="margin:0"><input type="checkbox" id="hkAutoVerify" />
+            <span><b>Auto-run tests on finish</b> <span class="muted">— run the project's build/test command and notify pass/fail</span></span></label>
+        </div>
+        <div class="hk-feedhead muted">Recent events</div>
+        <div id="hkEvents" class="hk-events"><p class="empty">No hook events yet.</p></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- PAGE: Audit -->
+  <div class="page" id="page-audit">
+    <section class="panel">
+      <div class="panel-head"><h2>Audit · commands run</h2>
+        <div class="dev-head-right">
+          <input id="auditSearch" class="sf-search" placeholder="search history…" hidden />
+          <div class="tmetric" id="auditToggle"><button class="tm-btn on" data-audit="live">live</button><button class="tm-btn" data-audit="history">history</button></div>
+          <span id="auditCmdCount" class="muted"></span>
+        </div>
+      </div>
+      <div id="auditCmds" class="auditlist"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Audit · files changed</h2><span id="auditFileCount" class="muted"></span></div>
+      <div id="auditFiles" class="auditfiles"></div>
+    </section>
+  </div>
+
+  <!-- PAGE: GitHub -->
+  <div class="page" id="page-github">
+    <div class="gh-orgbar">
+      <span class="gh-orglabel">Owner</span>
+      <div id="ghOrgs" class="gh-orgs"></div>
+      <span class="gh-ro" title="rook only reads GitHub — no writes">read-only</span>
+    </div>
+    <main class="grid gh-grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Repositories</h2>
+          <span id="ghRepoCount" class="muted"></span>
+        </div>
+        <div class="sfilter"><input id="ghRepoSearch" class="sf-search" placeholder="filter repos…" /></div>
+        <ul id="ghRepoList" class="ghlist"><li class="empty">Pick an owner above.</li></ul>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2 id="ghRepoTitle">Issues &amp; PRs</h2>
+          <div class="tmetric">
+            <button class="gh-sub on" data-sub="issues">Issues</button>
+            <button class="gh-sub" data-sub="prs">PRs</button>
+          </div>
+        </div>
+        <div id="ghItems" class="ghitems"><p class="empty">Select a repository.</p></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- PAGE: Summaries -->
+  <div class="page" id="page-summaries">
+    <main class="grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Saved summaries</h2>
+          <div class="dev-head-right">
+            <button id="sumRefresh" class="bell" title="Refresh saved summaries"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+            <button id="sumNew" class="bell" title="Generate a new summary"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New</button>
+            <span id="sumBulk" class="devbulk"></span>
+            <span id="sumCount" class="muted"></span>
+          </div>
+        </div>
+        <ul id="sumList" class="ghlist"><li class="empty">No summaries yet.</li></ul>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2 id="sumViewTitle">Summary</h2>
+          <div class="dev-head-right"><button id="sumRegen" class="btn" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15A9 9 0 1 1 5.64 5.64"/></svg> Regenerate</button><button id="sumCopy" class="btn" hidden>Copy</button><button id="sumDownload" class="btn" hidden>Download .md</button><button id="sumDelete" class="btn danger" hidden>Delete</button></div>
+        </div>
+        <div id="sumView" class="summary-view"><p class="empty">Select a summary to read it, or generate a new one.</p></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- PAGE: Logos (decision gallery) -->
+  <div class="page" id="page-logos">
+
+    <section class="panel" style="margin:16px 22px 0">
+      <div class="panel-head"><h2>rook — the bird</h2><span class="muted">refined heads (two-color) + your flight shape, now two-color · click to preview</span></div>
+      <div class="logogrid">
+
+        <div class="logocard sel" data-logo="head-angular">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M20 41L13 27L23 13L33 21L57 25L37 30L32 33L27 41Z" fill="#3b5bdb"/><path d="M33 21L57 25L37 30Z" fill="#ff5c5c"/><circle cx="25" cy="23" r="2.4" fill="#f2ede1"/></svg>
+          <div class="lname">head · angular coral beak ★ shipped</div><div class="ldesc">the current logo</div>
+        </div>
+
+        <div class="logocard" data-logo="head-oval">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><ellipse cx="27" cy="28" rx="14" ry="15" fill="#3b5bdb"/><path d="M39 25L55 30L39 32Z" fill="#ff5c5c"/><circle cx="24" cy="24" r="2.6" fill="#f2ede1"/></svg>
+          <div class="lname">head · oval + coral beak</div><div class="ldesc">clean, reads at any size</div>
+        </div>
+
+        <div class="logocard" data-logo="head-peak">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M27 13c8 0 15 6 15 15 0 9-7 15-15 15s-15-6-15-15c0-5 3-9 6-11 0 0-1-3 0-4s3 1 4 2c1-1 3-2 5-2Z" fill="#3b5bdb"/><path d="M40 25L56 29L40 32Z" fill="#ff5c5c"/><circle cx="24" cy="24" r="2.6" fill="#f2ede1"/></svg>
+          <div class="lname">head · peaked crown</div><div class="ldesc">subtle crest = more corvid character</div>
+        </div>
+
+        <div class="logocard" data-logo="head-patch">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><ellipse cx="27" cy="28" rx="14" ry="15" fill="#3b5bdb"/><path d="M33 22L48 26L34 30Z" fill="#ff5c5c"/><path d="M40 25L56 29L40 31Z" fill="#3b5bdb"/><circle cx="24" cy="24" r="2.6" fill="#f2ede1"/></svg>
+          <div class="lname">head · pale face-patch</div><div class="ldesc">the real rook's field mark — most distinctive</div>
+        </div>
+
+        <div class="logocard" data-logo="head-mis">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><ellipse cx="27" cy="28" rx="14" ry="15" fill="#3b5bdb" transform="translate(2 2)"/><ellipse cx="27" cy="28" rx="14" ry="15" fill="#ff5c5c" style="mix-blend-mode:multiply"/><path d="M39 25L56 30L39 32Z" fill="#3b5bdb"/><circle cx="24" cy="24" r="2.6" fill="#f2ede1"/></svg>
+          <div class="lname">head · misregistration</div><div class="ldesc">full riso overprint</div>
+        </div>
+
+        <div class="logocard" data-logo="fly-split">
+          <svg class="lg" viewBox="0 0 64 64"><defs><clipPath id="FLL"><rect x="0" y="0" width="32" height="64"/></clipPath></defs><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M8 30Q22 29 31 15Q33 12 35 15Q44 29 58 30Q44 33 35 28Q34 26.5 33 28V38Q32 40 31 38V28Q30 26.5 29 28Q20 33 8 30Z" fill="#3b5bdb"/><path d="M8 30Q22 29 31 15Q33 12 35 15Q44 29 58 30Q44 33 35 28Q34 26.5 33 28V38Q32 40 31 38V28Q30 26.5 29 28Q20 33 8 30Z" fill="#ff5c5c" clip-path="url(#FLL)"/></svg>
+          <div class="lname">in flight · split (two-color)</div><div class="ldesc">your liked shape, coral + blue wings</div>
+        </div>
+
+        <div class="logocard" data-logo="fly-mis">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M8 30Q22 29 31 15Q33 12 35 15Q44 29 58 30Q44 33 35 28Q34 26.5 33 28V38Q32 40 31 38V28Q30 26.5 29 28Q20 33 8 30Z" fill="#3b5bdb" transform="translate(2.4 2.4)"/><path d="M8 30Q22 29 31 15Q33 12 35 15Q44 29 58 30Q44 33 35 28Q34 26.5 33 28V38Q32 40 31 38V28Q30 26.5 29 28Q20 33 8 30Z" fill="#ff5c5c" style="mix-blend-mode:multiply"/></svg>
+          <div class="lname">in flight · misregistration</div><div class="ldesc">flight shape, overprint style</div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="panel" style="margin:16px 22px 0">
+      <div class="panel-head"><h2>Risograph — pick the shape</h2><span class="muted">your palette: coral + blue overprinted on cream · click to preview</span></div>
+      <div class="logogrid">
+
+        <div class="logocard" data-logo="riso-r">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><text x="35" y="46" font-size="40" font-weight="800" font-family="-apple-system,Helvetica,sans-serif" text-anchor="middle" fill="#3b5bdb">r</text><text x="31" y="43" font-size="40" font-weight="800" font-family="-apple-system,Helvetica,sans-serif" text-anchor="middle" fill="#ff5c5c" style="mix-blend-mode:multiply">r</text></svg>
+          <div class="lname">riso r (misregistration)</div><div class="ldesc">offset ghost = signature riso — most brandable</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-ap">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><circle cx="34" cy="34" r="15" fill="none" stroke="#3b5bdb" stroke-width="5" stroke-linecap="round" stroke-dasharray="16 8.6"/><circle cx="31" cy="31" r="15" fill="none" stroke="#ff5c5c" stroke-width="5" stroke-linecap="round" stroke-dasharray="16 8.6" style="mix-blend-mode:multiply"/><circle cx="31" cy="31" r="4.5" fill="#3b5bdb"/></svg>
+          <div class="lname">riso aperture</div><div class="ldesc">focus ring with offset ghost — "watching"</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-key">
+          <svg class="lg" viewBox="0 0 64 64"><defs><mask id="RK"><rect x="14" y="14" width="32" height="32" rx="9" fill="#fff"/><circle cx="30" cy="27" r="6" fill="#000"/><path d="M27 31h6l-2 11h-2z" fill="#000"/></mask></defs><rect width="64" height="64" rx="16" fill="#f2ede1"/><rect x="19" y="19" width="32" height="32" rx="9" fill="#3b5bdb"/><rect x="14" y="14" width="32" height="32" rx="9" fill="#ff5c5c" mask="url(#RK)" style="mix-blend-mode:multiply"/></svg>
+          <div class="lname">riso portal</div><div class="ldesc">keyhole = control, offset ghost</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-ov">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><circle cx="26" cy="31" r="14" fill="#ff5c5c" style="mix-blend-mode:multiply"/><rect x="29" y="21" width="21" height="21" rx="6" fill="#3b5bdb" style="mix-blend-mode:multiply"/></svg>
+          <div class="lname">riso overlap</div><div class="ldesc">the original — circle + square overprint</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-bird">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><g fill="#3b5bdb"><path d="M22 44c-2-14 8-24 22-24 0 0-3 5-3 9 5 1 8 4 8 9 0 7-7 12-16 12-4 0-9-2-11-6z"/></g><g fill="#ff5c5c" style="mix-blend-mode:multiply"><path d="M19 42c-2-14 8-24 22-24 0 0-3 5-3 9 5 1 8 4 8 9 0 7-7 12-16 12-4 0-9-2-11-6z"/></g><circle cx="34" cy="30" r="2.2" fill="#f2ede1"/></svg>
+          <div class="lname">rook (the bird)</div><div class="ldesc">corvid, not chess — smartest bird, moves in flocks</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-sig">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><g fill="#3b5bdb"><rect x="21" y="35" width="8" height="14" rx="4"/><rect x="33" y="25" width="8" height="24" rx="4"/><rect x="45" y="17" width="8" height="32" rx="4"/></g><g fill="#ff5c5c" style="mix-blend-mode:multiply"><rect x="18" y="35" width="8" height="14" rx="4"/><rect x="30" y="25" width="8" height="24" rx="4"/><rect x="42" y="17" width="8" height="32" rx="4"/></g></svg>
+          <div class="lname">riso signal</div><div class="ldesc">activity bars, offset ghost</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-prompt">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M19 22l11 10-11 10" fill="none" stroke="#ff5c5c" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="34" y="39" width="15" height="5.5" rx="2.75" fill="#3b5bdb"/></svg>
+          <div class="lname">riso prompt</div><div class="ldesc">terminal chevron + caret, two-color</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-orbit">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M32 17a15 15 0 1 0 15 15" fill="none" stroke="#ff5c5c" stroke-width="6" stroke-linecap="round"/><circle cx="32" cy="32" r="5" fill="#3b5bdb"/></svg>
+          <div class="lname">riso orbit</div><div class="ldesc">ring + core, minimal</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-target">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><circle cx="32" cy="32" r="15" fill="none" stroke="#3b5bdb" stroke-width="4"/><circle cx="32" cy="32" r="9" fill="none" stroke="#ff5c5c" stroke-width="4" style="mix-blend-mode:multiply"/><circle cx="32" cy="32" r="3.5" fill="#3b5bdb"/></svg>
+          <div class="lname">riso target</div><div class="ldesc">concentric watch, alternating ink</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-conv">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><g stroke="#3b5bdb" stroke-width="2.4" opacity=".7"><line x1="32" y1="32" x2="19" y2="19"/><line x1="32" y1="32" x2="45" y2="19"/><line x1="32" y1="32" x2="17" y2="42"/><line x1="32" y1="32" x2="47" y2="42"/></g><g fill="#3b5bdb"><circle cx="19" cy="19" r="3.4"/><circle cx="45" cy="19" r="3.4"/><circle cx="17" cy="42" r="3.4"/><circle cx="47" cy="42" r="3.4"/></g><circle cx="32" cy="32" r="7" fill="#ff5c5c" style="mix-blend-mode:multiply"/></svg>
+          <div class="lname">riso convergence</div><div class="ldesc">agents → one core</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-hex">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M35 17l13 7.5v15L35 47l-13-7.5v-15z" fill="#3b5bdb"/><path d="M32 17l13 7.5v15L32 47l-13-7.5v-15z" fill="#ff5c5c" style="mix-blend-mode:multiply"/><circle cx="32" cy="32" r="5" fill="#f2ede1"/></svg>
+          <div class="lname">riso node</div><div class="ldesc">hexagon = infra/node, offset ghost</div>
+        </div>
+
+        <div class="logocard" data-logo="riso-eye">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><path d="M14 32c6-11 30-11 36 0-6 11-30 11-36 0z" fill="none" stroke="#ff5c5c" stroke-width="3.5"/><circle cx="32" cy="32" r="6.5" fill="#3b5bdb"/></svg>
+          <div class="lname">riso eye</div><div class="ldesc">watch every agent, two-color</div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="panel" style="margin:16px 22px 0">
+      <div class="panel-head"><h2>Fresh direction — no amber</h2><span class="muted">new shapes, palettes nobody in dev-tools uses · click to preview</span></div>
+      <div class="logogrid">
+
+        <div class="logocard" data-logo="split">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="F1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#6366f1"/></linearGradient><mask id="MF1"><rect width="64" height="64" fill="#fff"/><text x="33" y="47" font-size="42" font-weight="800" font-family="-apple-system,Helvetica,sans-serif" text-anchor="middle" fill="#000">r</text></mask></defs><rect width="64" height="64" rx="16" fill="url(#F1)" mask="url(#MF1)"/></svg>
+          <div class="lname">cyan → indigo r</div><div class="ldesc">negative-space r, electric duotone</div>
+        </div>
+
+        <div class="logocard" data-logo="riso">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f2ede1"/><g><circle cx="26" cy="31" r="14" fill="#ff5c5c" style="mix-blend-mode:multiply"/><rect x="29" y="21" width="21" height="21" rx="6" fill="#3b5bdb" style="mix-blend-mode:multiply"/></g></svg>
+          <div class="lname">risograph overlap</div><div class="ldesc">light badge, print-style blend — pops in a dark row</div>
+        </div>
+
+        <div class="logocard" data-logo="acid">
+          <svg class="lg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#0b0f0a"/><circle cx="32" cy="32" r="15" fill="none" stroke="#c6ff3d" stroke-width="5" stroke-linecap="round" stroke-dasharray="16 8.6"/><circle cx="32" cy="32" r="4.5" fill="#c6ff3d"/></svg>
+          <div class="lname">acid aperture</div><div class="ldesc">electric-lime = live/active energy</div>
+        </div>
+
+        <div class="logocard" data-logo="portal">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="F2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#d946ef"/></linearGradient><mask id="MF2"><rect width="64" height="64" fill="#fff"/><circle cx="32" cy="28" r="7" fill="#000"/><path d="M29 33h6l-2 12h-2z" fill="#000"/></mask></defs><rect width="64" height="64" rx="16" fill="url(#F2)" mask="url(#MF2)"/></svg>
+          <div class="lname">control portal</div><div class="ldesc">negative-space keyhole, indigo → magenta</div>
+        </div>
+
+        <div class="logocard" data-logo="stroke">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="F3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#0a0e14"/><path d="M25 21v22" fill="none" stroke="url(#F3)" stroke-width="6" stroke-linecap="round"/><path d="M25 31c1.5-8 9-9.5 15-6.5" fill="none" stroke="url(#F3)" stroke-width="6" stroke-linecap="round"/></svg>
+          <div class="lname">single-stroke r</div><div class="ldesc">one continuous mark, teal → cyan</div>
+        </div>
+
+        <div class="logocard" data-logo="wedge">
+          <svg class="lg" viewBox="0 0 64 64"><defs><clipPath id="F4"><rect width="64" height="64" rx="16"/></clipPath></defs><g clip-path="url(#F4)"><rect width="64" height="64" fill="#111318"/><path d="M0 0h64v64z" fill="#c6ff3d"/><circle cx="22" cy="22" r="7" fill="#111318"/></g></svg>
+          <div class="lname">wedge / rising</div><div class="ldesc">bold split, lime on graphite — dawn over the tower</div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="panel" style="margin:16px 22px">
+      <div class="panel-head"><h2>Earlier candidates (amber)</h2><span class="muted">the first batch — kept for reference</span></div>
+      <div class="logogrid">
+
+        <div class="logocard" data-logo="r">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc457"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient><mask id="M1"><rect width="64" height="64" fill="#fff"/><text x="33" y="47" font-size="42" font-weight="800" font-family="-apple-system,Helvetica,sans-serif" text-anchor="middle" fill="#000">r</text></mask></defs><rect width="64" height="64" rx="16" fill="url(#L1)" mask="url(#M1)"/></svg>
+          <div class="lname">negative-space r</div><div class="ldesc">bold monogram, most brandable</div>
+        </div>
+
+        <div class="logocard" data-logo="signal">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L2" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff7a1e"/><stop offset="1" stop-color="#ffd24a"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><g fill="url(#L2)"><rect x="18" y="34" width="8" height="14" rx="4"/><rect x="30" y="24" width="8" height="24" rx="4"/><rect x="42" y="16" width="8" height="32" rx="4"/></g></svg>
+          <div class="lname">ascending signal</div><div class="ldesc">tower + activity meter</div>
+        </div>
+
+        <div class="logocard" data-logo="converge">
+          <svg class="lg" viewBox="0 0 64 64"><defs><radialGradient id="L3" cx="50%" cy="50%"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><g stroke="#ff8a1e" stroke-width="2" opacity=".45"><line x1="32" y1="32" x2="18" y2="18"/><line x1="32" y1="32" x2="46" y2="18"/><line x1="32" y1="32" x2="16" y2="40"/><line x1="32" y1="32" x2="48" y2="40"/><line x1="32" y1="32" x2="32" y2="50"/></g><g fill="#ffb224"><circle cx="18" cy="18" r="3"/><circle cx="46" cy="18" r="3"/><circle cx="16" cy="40" r="3"/><circle cx="48" cy="40" r="3"/><circle cx="32" cy="50" r="3"/></g><circle cx="32" cy="32" r="7" fill="url(#L3)"/></svg>
+          <div class="lname">convergence</div><div class="ldesc">agents → one core</div>
+        </div>
+
+        <div class="logocard" data-logo="orbit">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc457"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><path d="M32 16a16 16 0 1 0 16 16" fill="none" stroke="url(#L4)" stroke-width="6" stroke-linecap="round"/><circle cx="32" cy="32" r="5" fill="url(#L4)"/></svg>
+          <div class="lname">orbit ring</div><div class="ldesc">minimal, scales tiny</div>
+        </div>
+
+        <div class="logocard" data-logo="tower">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L5" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc457"/><stop offset="1" stop-color="#ff8a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#14161d"/><path d="M20 22h5v3.5h5V22h4v3.5h5V22h5v9l-3.5 3.5V45h3.5v5H20v-5h3.5V34.5L20 31z" fill="url(#L5)"/></svg>
+          <div class="lname">tower (current)</div><div class="ldesc">watchtower / rook</div>
+        </div>
+
+        <div class="logocard" data-logo="murmur">
+          <svg class="lg" viewBox="0 0 64 64"><defs><radialGradient id="L6" cx="35%" cy="35%"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><g fill="url(#L6)"><circle cx="18" cy="34" r="2"/><circle cx="23" cy="30" r="2.4"/><circle cx="28" cy="27" r="2.6"/><circle cx="33" cy="25" r="3"/><circle cx="38" cy="24" r="2.8"/><circle cx="43" cy="25" r="2.5"/><circle cx="47" cy="28" r="2.1"/><circle cx="25" cy="37" r="2.2"/><circle cx="31" cy="33" r="2.6"/><circle cx="37" cy="31" r="2.4"/><circle cx="42" cy="32" r="2"/><circle cx="33" cy="41" r="2"/><circle cx="39" cy="38" r="1.9"/><circle cx="28" cy="44" r="1.7"/></g></svg>
+          <div class="lname">murmuration</div><div class="ldesc">flock moving as one</div>
+        </div>
+
+        <div class="logocard" data-logo="eye">
+          <svg class="lg" viewBox="0 0 64 64"><defs><radialGradient id="L7" cx="50%" cy="50%"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><path d="M14 32c6-10 30-10 36 0-6 10-30 10-36 0z" fill="none" stroke="url(#L7)" stroke-width="3"/><circle cx="32" cy="32" r="6" fill="url(#L7)"/></svg>
+          <div class="lname">all-seeing eye</div><div class="ldesc">watch every agent</div>
+        </div>
+
+        <div class="logocard" data-logo="rfill">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L8" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc457"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><text x="33" y="47" font-size="42" font-weight="800" font-family="-apple-system,Helvetica,sans-serif" text-anchor="middle" fill="url(#L8)">r</text></svg>
+          <div class="lname">r monogram (fill)</div><div class="ldesc">amber r on graphite</div>
+        </div>
+
+        <div class="logocard" data-logo="dim">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L9" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><text x="26" y="47" font-size="40" font-weight="800" font-family="-apple-system,Helvetica,sans-serif" text-anchor="middle" fill="#7a3d0a">r</text><text x="23" y="44" font-size="40" font-weight="800" font-family="-apple-system,Helvetica,sans-serif" text-anchor="middle" fill="url(#L9)">r</text></svg>
+          <div class="lname">dimensional r</div><div class="ldesc">extruded depth — 2026 gradient-depth trend</div>
+        </div>
+
+        <div class="logocard" data-logo="prompt">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L10" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc457"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><path d="M20 22l11 10-11 10" fill="none" stroke="url(#L10)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="35" y="39" width="15" height="5.5" rx="2.75" fill="url(#L10)"/></svg>
+          <div class="lname">terminal prompt</div><div class="ldesc">agent at the command line — dev-native</div>
+        </div>
+
+        <div class="logocard" data-logo="mesh">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L11" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe08a"/><stop offset=".5" stop-color="#ff8a1e"/><stop offset="1" stop-color="#e2431a"/></linearGradient><radialGradient id="L11b" cx="30%" cy="26%" r="70%"><stop offset="0" stop-color="#fff4d6" stop-opacity=".9"/><stop offset="1" stop-color="#fff4d6" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="20" fill="url(#L11)"/><rect width="64" height="64" rx="20" fill="url(#L11b)"/><circle cx="41" cy="40" r="6" fill="#12141b" opacity=".18"/></svg>
+          <div class="lname">aurora mesh</div><div class="ldesc">gradient-mesh squircle — app-icon first</div>
+        </div>
+
+        <div class="logocard" data-logo="modular">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L12" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><g fill="#5a3410"><rect x="16" y="16" width="12" height="12" rx="3"/><rect x="16" y="36" width="12" height="12" rx="3"/><rect x="36" y="16" width="12" height="12" rx="3"/></g><rect x="36" y="34" width="12" height="14" rx="3" fill="url(#L12)"/></svg>
+          <div class="lname">modular quad</div><div class="ldesc">adaptive mark system — one cell active</div>
+        </div>
+
+        <div class="logocard" data-logo="aperture">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L13" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><circle cx="32" cy="32" r="15" fill="none" stroke="url(#L13)" stroke-width="5" stroke-linecap="round" stroke-dasharray="16 8.6"/><circle cx="32" cy="32" r="4" fill="url(#L13)"/></svg>
+          <div class="lname">aperture</div><div class="ldesc">focus + watch, precision geometry</div>
+        </div>
+
+        <div class="logocard" data-logo="scope">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L14" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc457"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><g fill="none" stroke="url(#L14)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M26 19h-8v26h8"/><path d="M38 19h8v26h-8"/></g><circle cx="32" cy="32" r="4.5" fill="url(#L14)"/></svg>
+          <div class="lname">scope brackets</div><div class="ldesc">watching within scope — code-native</div>
+        </div>
+
+        <div class="logocard" data-logo="loop">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L15" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><path d="M44 24a15 15 0 1 0 3 12" fill="none" stroke="url(#L15)" stroke-width="5.5" stroke-linecap="round"/><path d="M38 20l8 3-3 8" fill="none" stroke="url(#L15)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div class="lname">work loop</div><div class="ldesc">issue → agent → PR — motion-ready</div>
+        </div>
+
+        <div class="logocard" data-logo="beacon">
+          <svg class="lg" viewBox="0 0 64 64"><defs><linearGradient id="L16" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd24a"/><stop offset="1" stop-color="#ff7a1e"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#12141b"/><g fill="none" stroke="url(#L16)" stroke-width="4" stroke-linecap="round" opacity=".55"><path d="M24 24a12 12 0 0 0 0 16"/><path d="M40 24a12 12 0 0 1 0 16"/></g><path d="M32 20l9 20H23z" fill="url(#L16)"/></svg>
+          <div class="lname">beacon</div><div class="ldesc">reachability — broadcasts to your phone</div>
+        </div>
+
+      </div>
+      <p class="usagenote muted">This is a preview gallery. Tell me which one to ship and I'll wire it as the favicon + header logo everywhere.</p>
+    </section>
+  </div>
+
+  <footer class="foot muted mono" id="foot"></footer>
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/addon-fit.js"></script>
+  <script src="/vendor/highlight.min.js"></script>
+  <script src="/board.js?v=112"></script>
+  <script src="/charts.js?v=112"></script>
+  <script src="/diffview.js?v=112"></script>
+  <script src="app.js?v=112"></script>
+</body>
+</html>

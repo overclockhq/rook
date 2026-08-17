@@ -1,0 +1,248 @@
+/* board.css — live status board (renderBoardV2).
+   Uses rook's CSS custom properties only; radius vars fall back to existing
+   --r* tokens when the --r-card/--r-btn/--r-chip aliases aren't defined. */
+
+.board-v2 {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
+  scrollbar-width: thin;
+}
+
+/* ---- column ---- */
+.board-v2 .bv-col {
+  flex: 1 1 0;
+  min-width: 230px;
+  max-width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card, var(--r, 11px));
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 190px);
+}
+
+.board-v2 .bv-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 13px 9px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.board-v2 .bv-col-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.board-v2 .bv-col-n {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip, 999px);
+  min-width: 20px;
+  text-align: center;
+  padding: 1px 6px;
+}
+
+.board-v2 .bv-newtask {
+  margin: 9px 11px 2px;
+  padding: 7px 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-btn, var(--r-sm, 8px));
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.board-v2 .bv-newtask:hover {
+  color: var(--accent-deep);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+
+.board-v2 .bv-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 60px;
+  scrollbar-width: thin;
+}
+
+.board-v2 .bv-drop-over {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.board-v2 .bv-empty {
+  margin: 6px 2px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  opacity: .7;
+  user-select: none;
+}
+
+/* ---- card ---- */
+.board-v2 .bv-card {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card, var(--r, 11px));
+  padding: 10px 11px;
+  cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.board-v2 .bv-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: var(--surface-3);
+  box-shadow: var(--sh-sm, 0 1px 2px rgba(0, 0, 0, .4));
+}
+.board-v2 .bv-card-queued {
+  cursor: default;
+  border-style: dashed;
+}
+.board-v2 .bv-card-queued:hover {
+  transform: none;
+}
+
+.board-v2 .bv-card-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.board-v2 .bv-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--idle);
+}
+.board-v2 .bv-dot.s-busy { background: var(--busy); }
+.board-v2 .bv-dot.s-shell { background: var(--shell); }
+.board-v2 .bv-dot.s-waiting { background: var(--waiting); }
+.board-v2 .bv-dot.s-idle { background: var(--idle); }
+.board-v2 .bv-dot.s-dead { background: var(--dead); }
+
+.board-v2 .bv-title {
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.board-v2 .bv-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.board-v2 .bv-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--r-chip, 999px);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.board-v2 .bv-prov {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+  border-color: color-mix(in srgb, var(--blue) 35%, transparent);
+}
+
+.board-v2 .bv-proj {
+  font-size: 11px;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.board-v2 .bv-health.h-alert {
+  color: var(--waiting);
+  background: color-mix(in srgb, var(--waiting) 14%, transparent);
+  border-color: color-mix(in srgb, var(--waiting) 35%, transparent);
+}
+.board-v2 .bv-health.h-warn {
+  color: var(--busy);
+  background: color-mix(in srgb, var(--busy) 14%, transparent);
+  border-color: color-mix(in srgb, var(--busy) 35%, transparent);
+}
+
+.board-v2 .bv-tok {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* ---- per-card actions ---- */
+.board-v2 .bv-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.board-v2 .bv-btn {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: var(--r-btn, var(--r-sm, 8px));
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.board-v2 .bv-btn:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+.board-v2 .bv-allow {
+  color: var(--shell);
+  border-color: color-mix(in srgb, var(--shell) 40%, var(--line));
+}
+.board-v2 .bv-allow:hover {
+  color: var(--shell);
+  background: color-mix(in srgb, var(--shell) 12%, var(--surface));
+  border-color: var(--shell);
+}
+.board-v2 .bv-danger {
+  color: var(--waiting);
+  border-color: color-mix(in srgb, var(--waiting) 40%, var(--line));
+}
+.board-v2 .bv-danger:hover {
+  color: var(--waiting);
+  background: color-mix(in srgb, var(--waiting) 12%, var(--surface));
+  border-color: var(--waiting);
+}
+
+@media (max-width: 720px) {
+  .board-v2 .bv-col { min-width: 200px; }
+}

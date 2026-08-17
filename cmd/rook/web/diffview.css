@@ -1,0 +1,371 @@
+/* diffview.css — styling for window.renderDiffV2. Uses rook's CSS custom
+   properties ONLY (no hardcoded colors). Pairs with vendor/highlight.css;
+   diff line tinting is layered under the hljs token colors. */
+
+.dv2 {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--bg);
+  position: relative;
+}
+
+/* ---------------------------------------------------------------- tree */
+.dv2-tree {
+  flex: 0 0 240px;
+  min-width: 200px;
+  max-width: 300px;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.dv2-tree-head {
+  padding: 10px 12px;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line-soft);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.dv2-tree-list { padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.dv2-tI {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-btn);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-family: var(--sans);
+}
+.dv2-tI:hover { background: var(--surface-2); color: var(--ink); }
+.dv2-tI.is-sel { background: var(--surface-3); color: var(--ink); border-color: var(--line); }
+.dv2-tI-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.dv2-tI-n { flex: 0 0 auto; font-family: var(--mono); font-size: 11px; }
+
+/* status chips */
+.dv2-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-chip);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--bg);
+  line-height: 1;
+}
+.dv2-chip-mod { background: var(--busy); }
+.dv2-chip-add,
+.dv2-chip-new { background: var(--shell); }
+.dv2-chip-del { background: var(--waiting); }
+.dv2-chip-ren,
+.dv2-chip-cpy { background: var(--blue); }
+
+.dv2-add { color: var(--shell); }
+.dv2-del { color: var(--waiting); }
+
+/* ---------------------------------------------------------------- main */
+.dv2-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.dv2-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.dv2-totals { font-size: 12px; color: var(--ink-2); }
+.dv2-totals strong { color: var(--ink); }
+.dv2-base { color: var(--muted); }
+.dv2-trunc { color: var(--busy); }
+
+.dv2-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-btn);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.dv2-seg-b {
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+.dv2-seg-b + .dv2-seg-b { border-left: 1px solid var(--line); }
+.dv2-seg-b.is-on { background: var(--accent); color: var(--bg); }
+
+.dv2-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.dv2-empty,
+.dv2-note {
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- file */
+.dv2-file { border-bottom: 1px solid var(--line); }
+.dv2-file-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-soft);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.dv2-collapse {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 12px;
+  transition: transform .12s ease;
+}
+.dv2-file.is-collapsed .dv2-collapse { transform: rotate(-90deg); }
+.dv2-file.is-collapsed .dv2-file-body { display: none; }
+.dv2-file.is-viewed .dv2-file-head { opacity: .6; }
+.dv2-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink);
+}
+.dv2-file-n { flex: 0 0 auto; font-family: var(--mono); font-size: 11px; }
+.dv2-viewed {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.dv2-viewed input { accent-color: var(--accent); cursor: pointer; }
+
+/* ---------------------------------------------------------------- diff lines */
+.dv2-file-body { font-family: var(--mono); font-size: 12px; line-height: 1.55; }
+.dv2-hunk {
+  padding: 3px 12px;
+  color: var(--blue);
+  background: var(--surface-3);
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.dv2-line { display: flex; align-items: flex-start; min-height: 20px; }
+.dv2-line:hover { background: var(--surface-2); }
+.dv2-ln {
+  flex: 0 0 auto;
+  width: 44px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+  border-right: 1px solid var(--line-soft);
+  font-size: 11px;
+}
+.dv2-plus {
+  flex: 0 0 auto;
+  width: 18px;
+  align-self: stretch;
+  border: 0;
+  padding: 0;
+  margin: 0 2px;
+  background: transparent;
+  color: var(--bg);
+  cursor: pointer;
+  opacity: 0;
+  font-weight: 700;
+  border-radius: var(--r-chip);
+  line-height: 1;
+}
+.dv2-line:hover .dv2-plus,
+.dv2-cell:hover .dv2-plus { opacity: 1; background: var(--accent); }
+.dv2-sign {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+}
+.dv2-src {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 10px 0 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: transparent;
+  color: var(--ink);
+}
+
+/* add / del tinting — subtle, so hljs tokens still read on top */
+.dv2-add { }
+.dv2-line.dv2-add,
+.dv2-cell.dv2-add { background: color-mix(in srgb, var(--shell) 12%, transparent); }
+.dv2-line.dv2-del,
+.dv2-cell.dv2-del { background: color-mix(in srgb, var(--waiting) 12%, transparent); }
+.dv2-line.dv2-add:hover,
+.dv2-cell.dv2-add:hover { background: color-mix(in srgb, var(--shell) 18%, transparent); }
+.dv2-line.dv2-del:hover,
+.dv2-cell.dv2-del:hover { background: color-mix(in srgb, var(--waiting) 18%, transparent); }
+.dv2-line.dv2-add .dv2-sign { color: var(--shell); }
+.dv2-line.dv2-del .dv2-sign { color: var(--waiting); }
+
+/* keep hljs token colors from the vendored theme, but ensure default text
+   inherits our ink so plaintext lines match the surface */
+.dv2-src .hljs { background: transparent; color: inherit; }
+
+/* ---------------------------------------------------------------- split view */
+.dv2-srow { display: flex; align-items: stretch; }
+.dv2-cell {
+  flex: 1 1 50%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  min-height: 20px;
+  border-right: 1px solid var(--line-soft);
+}
+.dv2-cell:last-child { border-right: 0; }
+.dv2-cell:hover { background: var(--surface-2); }
+.dv2-cell.dv2-empty { background: var(--surface); }
+.dv2-cell .dv2-ln { width: 40px; }
+.dv2-cell.dv2-add .dv2-sign { color: var(--shell); }
+.dv2-cell.dv2-del .dv2-sign { color: var(--waiting); }
+
+/* ---------------------------------------------------------------- comments */
+.dv2-editor {
+  padding: 10px 12px 10px 60px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.dv2-editor-meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.dv2-editor-ta {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-btn);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.dv2-editor-ta:focus { outline: none; border-color: var(--accent); }
+.dv2-editor-act { display: flex; gap: 8px; margin-top: 8px; }
+.dv2-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-btn);
+  background: var(--surface-3);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+.dv2-btn:hover { border-color: var(--ink-2); }
+.dv2-btn-primary { background: var(--accent); border-color: var(--accent-2); color: var(--bg); }
+.dv2-btn-primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+
+.dv2-comment {
+  position: relative;
+  padding: 10px 34px 10px 60px;
+  background: var(--surface);
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid var(--accent);
+  font-family: var(--sans);
+}
+.dv2-comment-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.dv2-comment-text { font-size: 13px; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.dv2-comment-del {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-chip);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+.dv2-comment-del:hover { background: var(--surface-3); color: var(--waiting); }
+
+/* ---------------------------------------------------------------- floating send */
+.dv2-send {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 50;
+  padding: 11px 18px;
+  border: 1px solid var(--accent-2);
+  border-radius: var(--r-card);
+  background: var(--accent);
+  color: var(--bg);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+}
+.dv2-send:hover { background: var(--accent-2); }
+.dv2-send[hidden] { display: none; }
+
+/* narrow: stack tree above, force unified reading width */
+@media (max-width: 760px) {
+  .dv2 { flex-direction: column; }
+  .dv2-tree { flex-basis: auto; max-width: none; max-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .dv2.is-split .dv2-srow { flex-direction: column; }
+  .dv2.is-split .dv2-cell { border-right: 0; }
+}

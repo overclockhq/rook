@@ -1,0 +1,132 @@
+/* ============================================================
+   rook charts — styling for the SVG data-viz module (charts.js).
+   Uses ONLY rook's CSS custom properties so every chart is
+   theme-aware across graphite / light / coffee. No hardcoded colors.
+   ============================================================ */
+
+.rook-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--sans);
+  overflow: visible;
+}
+
+/* ---- text: values, labels, axes wear ink tokens, never a series color ---- */
+.rook-chart text { font-family: var(--sans); }
+
+.rc-label {
+  fill: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+}
+.rc-val {
+  fill: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.rc-axis {
+  fill: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- bar / track marks ---- */
+.rc-track { fill: var(--surface-2); }
+.rc-bar { }                 /* fill set inline via var(--accent) or override */
+.rc-hit { cursor: pointer; }
+.rc-hit:hover + .rc-bar,
+.rook-chart .rc-bar { transition-timing-function: cubic-bezier(.22,.61,.36,1); }
+
+/* ---- line / area ---- */
+.rc-grid { stroke: var(--line); stroke-width: 1; }
+.rc-area { fill-opacity: .14; }        /* fill set inline (accent) */
+.rc-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.rc-endpoint { stroke: var(--surface-2); stroke-width: 2; }   /* fill set inline */
+.rc-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; transition: opacity .08s; pointer-events: none; }
+.rc-cross-dot { stroke: var(--surface-2); stroke-width: 2; transition: opacity .08s; pointer-events: none; }
+
+/* ---- donut ---- */
+.rc-donut-wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.rc-donut-wrap .rook-chart { flex: 0 0 auto; width: 180px; }
+.rc-arc { cursor: pointer; transition: opacity .12s ease; }
+.rook-chart.rc-dim .rc-arc { opacity: .32; }
+.rook-chart.rc-dim .rc-arc.rc-on { opacity: 1; }
+.rc-center-v {
+  fill: var(--ink);
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rc-center-l {
+  fill: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+}
+
+/* ---- trace timeline (waterfall) ---- */
+.rc-row { fill: transparent; }
+.rc-row.rc-on { fill: var(--surface-2); }
+.rc-tl-label {
+  fill: var(--ink-2);
+  font-size: 11px;
+  font-weight: 550;
+}
+.rc-tl-bar { cursor: pointer; }
+
+/* ---- legend ---- */
+.rc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 10px 4px 2px;
+  font-size: 11px;
+}
+.rc-leg-item { display: flex; align-items: center; gap: 6px; }
+.rc-swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+.rc-leg-name { color: var(--ink-2); }
+.rc-leg-val { color: var(--muted); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ---- empty state ---- */
+.rc-empty { color: var(--muted); padding: 22px; text-align: center; font-size: 12px; }
+
+/* ---- shared floating tooltip ---- */
+.rook-tip {
+  position: fixed;
+  z-index: 55;
+  top: 0; left: 0;
+  pointer-events: none;
+  max-width: 260px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-lg);
+  padding: 7px 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0;
+  transition: opacity .08s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rook-tip.show { opacity: 1; }
+.rook-tip b { color: var(--ink); font-weight: 650; }
+.rook-tip .rc-tip-sub { color: var(--muted); font-size: 11px; }
+.rook-tip .rc-tip-v {
+  color: var(--accent-deep, var(--accent));
+  font-family: var(--mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* respect reduced motion — kill all chart transitions */
+@media (prefers-reduced-motion: reduce) {
+  .rook-chart *, .rook-tip { transition: none !important; }
+}

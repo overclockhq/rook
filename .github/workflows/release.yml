@@ -1,0 +1,38 @@
+name: release
+
+# Push a version tag to cut a release:
+#   git tag v0.1.0 && git push origin v0.1.0
+# Builds cross-platform binaries, publishes a GitHub Release, and updates the
+# Homebrew tap (needs a HOMEBREW_TAP_GITHUB_TOKEN secret; see README).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with repo scope on overclockhq/homebrew-tap (falls back to
+          # GITHUB_TOKEN, which can't push to the tap — set the secret to enable brew)
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

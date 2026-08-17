@@ -1,0 +1,18 @@
+/rook
+/rook-linux-amd64
+
+# internal planning / research docs — kept local, not part of the public repo
+docs/ORCHESTRATOR_ROADMAP.md
+docs/ECOSYSTEM_LANDSCAPE.md
+docs/AGENT_QUALITY_RESEARCH.md
+docs/REDESIGN_PLAN.md
+docs/ROADMAP_V2_AGENT_QUALITY.md
+docs/UI_UX_SPEC.md
+docs/screenshot-home.png
+
+# built binaries (anchored to repo root so they don't match the cmd/rook/ source dir)
+/agentpeek-local
+/rook-linux-amd64
+*.test
+LAUNCH_PLAN.md
+notes/
