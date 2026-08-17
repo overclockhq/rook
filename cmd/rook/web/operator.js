@@ -950,12 +950,15 @@
   function openTermTab() {
     var p = $("wsTerm"); if (!p) return;
     var s = findAgent(selectedId); if (!s || !s.controllable || !s.tmuxPane) { p.innerHTML = '<div class="op-empty">' + I.terminal + '<div class="t">This agent has no attachable terminal</div></div>'; return; }
-    if (ws.term && ws.term.pane === s.tmuxPane) { setTimeout(fitTerm, 30); return; }
+    // Already attached to this pane — do nothing on poll. Re-fitting here every
+    // 2s cleared any in-progress text selection, making copy impossible; genuine
+    // container resizes are handled by the ResizeObserver below.
+    if (ws.term && ws.term.pane === s.tmuxPane) { return; }
     teardownTerm();
-    p.innerHTML = '<div class="ws-term-wrap"><div class="ws-term-bar">' + I.terminal + "<span>tmux · " + esc(s.tmuxPane) + "</span></div><div class=\"ws-term-host\" id=\"wsTermHost\"></div></div>";
+    p.innerHTML = '<div class="ws-term-wrap"><div class="ws-term-bar">' + I.terminal + "<span>tmux · " + esc(s.tmuxPane) + "</span><span class=\"ws-term-hint\">scroll to view history · ⌥-drag to select &amp; copy</span></div><div class=\"ws-term-host\" id=\"wsTermHost\"></div></div>";
     if (typeof Terminal === "undefined") { p.innerHTML = '<div class="op-empty">terminal library not loaded</div>'; return; }
     var host = $("wsTermHost");
-    var xt = new Terminal({ fontFamily: '"Geist Mono", ui-monospace, Menlo, monospace', fontSize: 12.5, lineHeight: 1.2, cursorBlink: true, scrollback: 8000, allowProposedApi: true, theme: { background: "#08080a", foreground: "#e6e6ea", cursor: "#ff5c3a", selectionBackground: "rgba(255,92,58,.25)" } });
+    var xt = new Terminal({ fontFamily: '"Geist Mono", ui-monospace, Menlo, monospace', fontSize: 12.5, lineHeight: 1.2, cursorBlink: true, scrollback: 8000, allowProposedApi: true, macOptionClickForcesSelection: true, theme: { background: "#08080a", foreground: "#e6e6ea", cursor: "#ff5c3a", selectionBackground: "rgba(255,92,58,.4)" } });
     var fit = new FitAddon.FitAddon(); xt.loadAddon(fit); xt.open(host);
     var rec = { pane: s.tmuxPane, xt: xt, fit: fit, host: host, ws: null };
     ws.term = rec;
@@ -965,6 +968,9 @@
   }
   function fitTerm() {
     var r = ws.term; if (!r) return;
+    // never resize mid-selection — fit() clears the xterm selection, which would
+    // wipe what the user is trying to copy.
+    if (r.xt.hasSelection && r.xt.hasSelection()) return;
     try {
       r.fit.fit();
       // backend control protocol is {"resize":[cols,rows]}; only send when the
