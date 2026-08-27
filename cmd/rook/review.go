@@ -42,15 +42,18 @@ func reviewPrompt(lens, base string) string {
 		how = "run `git diff " + base + "...HEAD` (committed changes since the fork point) AND `git diff` and `git diff --staged` (uncommitted) and `git status`"
 	}
 	lines := []string{
-		"You are a strict, read-only code reviewer. Review ALL changes in this working tree — " + how + ". If the diff is empty, say so explicitly rather than approving.",
-		"Report concrete issues only, grouped as: Correctness/bugs, Security, Missing tests, Style. Cite file:line for each. If a change looks wrong, say why and suggest the fix.",
+		"You are a strict, read-only code reviewer. Review ONLY the changes in this working tree — " + how + ". If the diff is empty, say so explicitly rather than approving.",
+		"Report only real defects INTRODUCED by these changes, most severe first, across these classes: Correctness/bugs, Security, Missing tests/edge cases, API/backward-compatibility. Also flag newly-introduced violations of the repo's CLAUDE.md / AGENTS.md conventions.",
+		"Do NOT comment on style, naming, or formatting. Do NOT flag pre-existing issues or anything a linter would catch. (Pointing out a genuinely simpler equivalent for new code is fine — that is not style.)",
+		"Only report a finding if you are confident it is a real problem (>=80/100) AND you can name the concrete input or scenario that makes it fail. If you cannot, drop it — no speculative or padding comments. If a class has nothing, don't mention it.",
+		"Format each finding as one entry: `[Critical|High|Medium] file:line` — what's wrong (one line), why it breaks (the failing case), then a concrete fix.",
 	}
 	if lens != "" {
 		lines = append(lines, lens)
 	}
 	lines = append(lines,
 		"Keep the whole review DISTILLED: at most ~25 lines / ~1500 tokens — a summary a human can act on, not a transcript. Skip trivia.",
-		"Do NOT modify any files, do NOT commit, do NOT run destructive commands. Lead with a one-line VERDICT: SHIP / FIX-FIRST / BLOCK and a one-sentence reason.",
+		"Do NOT modify any files, do NOT commit, do NOT run destructive commands. Lead with a one-line VERDICT: SHIP / FIX-FIRST / BLOCK (BLOCK only if there is a Critical finding) and a one-sentence reason.",
 	)
 	return strings.Join(lines, "\n")
 }
