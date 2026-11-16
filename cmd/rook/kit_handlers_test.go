@@ -272,37 +272,6 @@ func TestFallbackFlowList(t *testing.T) {
 	assert.False(t, agentReadOnly(f.Tools, nil), "an agent with Edit in a flow list is not read-only")
 }
 
-func TestKitSameSite(t *testing.T) {
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
-	h := kitSameSite(ok)
-	tests := []struct {
-		name, path, site, origin string
-		want                     int
-	}{
-		{"same origin fetch", "/api/kit/file", "same-origin", "http://127.0.0.1:7480", http.StatusTeapot},
-		{"no browser headers (curl)", "/api/kit", "", "", http.StatusTeapot},
-		{"cross-site fetch", "/api/kit/file", "cross-site", "", http.StatusForbidden},
-		{"same-site other port", "/api/kit", "same-site", "", http.StatusForbidden},
-		{"foreign origin without fetch metadata", "/api/kit/audit", "", "https://evil.example", http.StatusForbidden},
-		{"bad origin", "/api/kit", "", "://", http.StatusForbidden},
-		{"other endpoints untouched", "/api/state", "cross-site", "https://evil.example", http.StatusTeapot},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7480"+tc.path, http.NoBody)
-			if tc.site != "" {
-				r.Header.Set("Sec-Fetch-Site", tc.site)
-			}
-			if tc.origin != "" {
-				r.Header.Set("Origin", tc.origin)
-			}
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, r)
-			assert.Equal(t, tc.want, w.Code)
-		})
-	}
-}
-
 func TestHandleKitFileUnreadable(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores file permissions")

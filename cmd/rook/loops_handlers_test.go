@@ -40,10 +40,13 @@ func (e loopEnv) tmuxCalls(t *testing.T) string {
 	return string(b)
 }
 
+// setPanes writes the fake tmux pane list; "SESS" stands for the demo loop's session.
 func (e loopEnv) setPanes(t *testing.T, lines string) {
 	t.Helper()
-	writeLoopFile(t, e.panes, lines)
+	writeLoopFile(t, e.panes, strings.ReplaceAll(lines, "SESS", e.sess()))
 }
+
+func (e loopEnv) sess() string { return loopSessionName(e.repo, "demo") }
 
 // newLoopEnv builds a fake HOME with a repo root (via ~/.rook/config.json), one
 // loop "demo", the runner script, a fake tmux and a stubbed branch/process scan.
@@ -104,7 +107,7 @@ func rawData(t *testing.T, v any) any {
 
 func TestHandleLoops_ListsLoopFromRepoRoots(t *testing.T) {
 	e := newLoopEnv(t, "feature/x")
-	e.setPanes(t, "rook-loop-proj-demo\t1\t3\nother\t0\t0\n")
+	e.setPanes(t, "SESS\t1\t3\nother\t0\t0\n")
 
 	out, err := handleLoops(loopCtx(http.MethodGet, "/api/loops", ""))
 	require.NoError(t, err)
@@ -141,7 +144,7 @@ func TestHandleLoopStart(t *testing.T) {
 		{name: "path-ish name", branch: "feature/x", body: `{"repo":"REPO","name":"../x"}`, wantCode: http.StatusNotFound},
 		{name: "protected branch", branch: "main", body: `{"repo":"REPO","name":"demo"}`, wantCode: http.StatusConflict, wantMsg: "refusing to loop on main"},
 		{name: "already running", branch: "feature/x", body: `{"repo":"REPO","name":"demo"}`,
-			setup: func(t *testing.T, e loopEnv) { e.setPanes(t, "rook-loop-proj-demo\t0\t0\n") }, wantCode: http.StatusConflict, wantMsg: "already running"},
+			setup: func(t *testing.T, e loopEnv) { e.setPanes(t, "SESS\t0\t0\n") }, wantCode: http.StatusConflict, wantMsg: "already running"},
 		{name: "runner script missing", branch: "feature/x", body: `{"repo":"REPO","name":"demo"}`,
 			setup: func(t *testing.T, e loopEnv) {
 				require.NoError(t, os.Remove(filepath.Join(e.home, ".claude", "skills", "loop-spec", "scripts", "loop-run.sh")))
@@ -171,12 +174,12 @@ func TestHandleLoopStart(t *testing.T) {
 			}
 			require.NoError(t, err)
 			m := rawData(t, out).(map[string]any)
-			assert.Equal(t, "rook-loop-proj-demo", m["session"])
+			assert.Equal(t, e.sess(), m["session"])
 			calls := e.tmuxCalls(t)
 			script := filepath.Join(e.home, ".claude", "skills", "loop-spec", "scripts", "loop-run.sh")
-			assert.Contains(t, calls, "new-session -d -s rook-loop-proj-demo -x 200 -y 50 -c "+e.repo+" bash '"+script+"' 'demo'")
+			assert.Contains(t, calls, "new-session -d -s "+e.sess()+" -x 200 -y 50 -c "+e.repo+" bash '"+script+"' 'demo'")
 			assert.Contains(t, calls, "remain-on-exit on")
-			assert.Contains(t, calls, "kill-session -t =rook-loop-proj-demo", "a finished runner's pane is cleared first")
+			assert.Contains(t, calls, "kill-session -t ="+e.sess(), "a finished runner's pane is cleared first")
 		})
 	}
 }
@@ -190,11 +193,11 @@ func TestHandleLoopStop(t *testing.T) {
 		noTmux   bool
 		wantCode int
 	}{
-		{name: "kills the rook session", body: `{"repo":"REPO","name":"demo"}`, panes: "rook-loop-proj-demo\t0\t0\n"},
+		{name: "kills the rook session", body: `{"repo":"REPO","name":"demo"}`, panes: "SESS\t0\t0\n"},
 		{name: "no rook session", body: `{"repo":"REPO","name":"demo"}`, wantCode: http.StatusNotFound},
 		{name: "bad name", body: `{"repo":"REPO","name":"a b"}`, wantCode: http.StatusBadRequest},
 		{name: "missing repo", body: `{"name":"demo"}`, wantCode: http.StatusBadRequest},
-		{name: "kill fails", body: `{"repo":"REPO","name":"demo"}`, panes: "rook-loop-proj-demo\t0\t0\n", fail: true, wantCode: http.StatusInternalServerError},
+		{name: "kill fails", body: `{"repo":"REPO","name":"demo"}`, panes: "SESS\t0\t0\n", fail: true, wantCode: http.StatusInternalServerError},
 		{name: "no tmux", body: `{"repo":"REPO","name":"demo"}`, noTmux: true, wantCode: http.StatusServiceUnavailable},
 	}
 	for _, tc := range tests {
@@ -214,8 +217,8 @@ func TestHandleLoopStop(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, "rook-loop-proj-demo", rawData(t, out).(map[string]any)["session"])
-			assert.Contains(t, e.tmuxCalls(t), "kill-session -t =rook-loop-proj-demo")
+			assert.Equal(t, e.sess(), rawData(t, out).(map[string]any)["session"])
+			assert.Contains(t, e.tmuxCalls(t), "kill-session -t ="+e.sess())
 		})
 	}
 }

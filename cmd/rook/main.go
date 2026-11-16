@@ -48,12 +48,18 @@ func main() {
 	// the extra metrics server (this is a loopback single-user tool).
 	os.Setenv("HTTP_PORT", port)
 	os.Setenv("METRICS_PORT", "0")
+	// GoFr answers CORS with "*" by default; rook's UI is same-origin and needs none.
+	_ = os.Setenv("ACCESS_CONTROL_ALLOW_ORIGIN", "http://127.0.0.1:"+port)
 
 	if err := initDB(); err != nil {
 		log.Printf("summary store disabled: %v", err)
 	}
 	if err := migrateReviewRuns(db); err != nil {
 		log.Printf("review runs store disabled: %v", err)
+	}
+	stopReviewsOnSignal()
+	if err := refreshHookScript(); err != nil {
+		log.Printf("hook bridge refresh failed: %v", err)
 	}
 	loadGraphs() // restore checkpointed task graphs so runs survive a restart
 	if *notifyOn {
@@ -69,9 +75,9 @@ func main() {
 	// Enforce loopback-only (or token for remote) + no-store caching at the app
 	// layer — GoFr binds all interfaces, so the guard is what keeps rook local.
 	app.UseMiddleware(accessGuard(*token))
+	app.UseMiddleware(sameOriginGuard(port, *token != "")) // before the terminal socket and every API route
 	app.UseMiddleware(termWSMiddleware) // intercept /ws/term for the interactive PTY bridge
 	app.UseMiddleware(noCache)
-	app.UseMiddleware(kitSameSite) // kit endpoints read local files: same-origin only
 
 	// static UI (embedded). The Operator console is the front door; the
 	// original dashboard stays reachable at /classic during the migration.

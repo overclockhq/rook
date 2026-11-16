@@ -120,17 +120,22 @@ func TestLastLinesAndTailFile(t *testing.T) {
 }
 
 func TestLoopSessionName(t *testing.T) {
-	tests := []struct{ repo, name, want string }{
-		{"/x/rook", "demo", "rook-loop-rook-demo"},
-		{"/x/my.repo", "v1.2", "rook-loop-my-repo-v1-2"},
-		{"/x/a b:c", "n", "rook-loop-a-b-c-n"},
+	tests := []struct{ repo, name, prefix string }{
+		{"/x/rook", "demo", "rook-loop-rook-demo-"},
+		{"/x/my.repo", "v1.2", "rook-loop-my-repo-v1-2-"},
+		{"/x/a b:c", "n", "rook-loop-a-b-c-n-"},
 	}
 	for _, tc := range tests {
 		got := loopSessionName(tc.repo, tc.name)
-		assert.Equal(t, tc.want, got)
+		assert.True(t, strings.HasPrefix(got, tc.prefix), got)
+		assert.Len(t, got, len(tc.prefix)+6, "readable prefix plus a 6-hex hash")
 		assert.NotContains(t, got, ".")
 		assert.NotContains(t, got, ":")
 	}
+	// Same folder name in different places, or names that sanitise alike, must not share a session.
+	assert.NotEqual(t, loopSessionName("/a/api", "main"), loopSessionName("/b/api", "main"))
+	assert.NotEqual(t, loopSessionName("/a/api", "v1.2"), loopSessionName("/a/api", "v1-2"))
+	assert.Equal(t, loopSessionName("/a/api/", "main"), loopSessionName("/a/api", "main"), "path is cleaned")
 }
 
 func TestParseRunnerProc(t *testing.T) {
@@ -236,7 +241,10 @@ func TestReadLoop(t *testing.T) {
 	assert.Equal(t, 1, li.Passing)
 	assert.Equal(t, 3, li.Total)
 	assert.Equal(t, 1, li.NeedsUser)
-	assert.JSONEq(t, `{"max_iters":20}`, string(li.Budget))
+	if assert.NotNil(t, li.Budget) && assert.NotNil(t, li.Budget.MaxIters) {
+		assert.Equal(t, 20, *li.Budget.MaxIters)
+	}
+	assert.Nil(t, li.Budget.MaxMinutes)
 	assert.Equal(t, "p1\np2", li.ProgressTail)
 	assert.Equal(t, 1, li.Metrics.Passes)
 	assert.Contains(t, li.Error, "1 corrupt line")
@@ -341,4 +349,17 @@ func TestReadRecentLoopPasses(t *testing.T) {
 	empty := readRecentLoopPasses(filepath.Join(t.TempDir(), "none"), 50)
 	assert.NotNil(t, empty)
 	assert.Empty(t, empty)
+}
+
+func TestReadLoop_BudgetMustBeNumbers(t *testing.T) {
+	repo := t.TempDir()
+	d := filepath.Join(repo, ".loop", "x")
+	writeLoopFile(t, filepath.Join(d, "tasks.json"), `[]`)
+	// A repo can commit any budget.json; markup in it must never reach the UI.
+	writeLoopFile(t, filepath.Join(d, "budget.json"), `{"max_iters":"<img src=x onerror=alert(1)>"}`)
+
+	li := readLoop(loopRef{Repo: repo, Name: "x"})
+
+	assert.Nil(t, li.Budget)
+	assert.Contains(t, li.Error, "budget.json")
 }

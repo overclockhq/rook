@@ -38,6 +38,12 @@ func TestSaveConfig(t *testing.T) {
 			want:     map[string]any{"editor": "zed"},
 		},
 		{
+			name:     "file holding null",
+			existing: `null`,
+			save:     Config{Ntfy: "x"},
+			want:     map[string]any{"ntfy": "x"},
+		},
+		{
 			name: "creates the file",
 			save: Config{JiraBase: "https://x.atlassian.net"},
 			want: map[string]any{"jiraBase": "https://x.atlassian.net"},

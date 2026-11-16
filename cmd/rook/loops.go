@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,28 +80,28 @@ type loopMetrics struct {
 }
 
 type loopInfo struct {
-	Repo            string          `json:"repo"`
-	RepoName        string          `json:"repoName"`
-	Branch          string          `json:"branch"`
-	Name            string          `json:"name"`
-	Goal            string          `json:"goal"`
-	Tasks           []loopTask      `json:"tasks"`
-	Passing         int             `json:"passing"`
-	Total           int             `json:"total"`
-	NeedsUser       int             `json:"needsUser"`
-	Budget          json.RawMessage `json:"budget,omitempty"`
-	ProgressTail    string          `json:"progressTail"`
-	Metrics         loopMetrics     `json:"metrics"`
-	Running         bool            `json:"running"`
-	Runner          string          `json:"runner,omitempty"` // "rook" (our tmux session) | "external"
-	Session         string          `json:"session"`          // tmux session name rook uses for this loop
-	Exited          bool            `json:"exited,omitempty"` // rook's runner finished; its pane is kept
-	ExitCode        int             `json:"exitCode,omitempty"`
-	RunnerOutput    string          `json:"runnerOutput,omitempty"` // last lines of an exited runner's pane
-	LastActivity    int64           `json:"lastActivity"`           // unix ms, newest file mtime in the loop dir
-	Status          string          `json:"status"`                 // running | done | needs-you | idle
-	ProtectedBranch bool            `json:"protectedBranch"`
-	Error           string          `json:"error,omitempty"`
+	Repo            string      `json:"repo"`
+	RepoName        string      `json:"repoName"`
+	Branch          string      `json:"branch"`
+	Name            string      `json:"name"`
+	Goal            string      `json:"goal"`
+	Tasks           []loopTask  `json:"tasks"`
+	Passing         int         `json:"passing"`
+	Total           int         `json:"total"`
+	NeedsUser       int         `json:"needsUser"`
+	Budget          *loopBudget `json:"budget,omitempty"`
+	ProgressTail    string      `json:"progressTail"`
+	Metrics         loopMetrics `json:"metrics"`
+	Running         bool        `json:"running"`
+	Runner          string      `json:"runner,omitempty"` // "rook" (our tmux session) | "external"
+	Session         string      `json:"session"`          // tmux session name rook uses for this loop
+	Exited          bool        `json:"exited,omitempty"` // rook's runner finished; its pane is kept
+	ExitCode        int         `json:"exitCode,omitempty"`
+	RunnerOutput    string      `json:"runnerOutput,omitempty"` // last lines of an exited runner's pane
+	LastActivity    int64       `json:"lastActivity"`           // unix ms, newest file mtime in the loop dir
+	Status          string      `json:"status"`                 // running | done | needs-you | idle
+	ProtectedBranch bool        `json:"protectedBranch"`
+	Error           string      `json:"error,omitempty"`
 }
 
 type loopsResp struct {
@@ -426,11 +428,19 @@ var loopSanRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
 // loopSessionName is the tmux session rook runs a loop's runner in. tmux
 // rejects '.' and ':' in names, so both parts are sanitised.
+// loopSessionName is readable (repo folder + loop name) and unique: a short hash
+// of the full repo path and raw name keeps ~/a/api and ~/b/api, or loops "v1.2"
+// and "v1-2", from sharing one tmux session.
 func loopSessionName(repo, name string) string {
 	r := strings.Trim(loopSanRe.ReplaceAllString(filepath.Base(repo), "-"), "-")
 	n := strings.Trim(loopSanRe.ReplaceAllString(name, "-"), "-")
-	return "rook-loop-" + r + "-" + n
+	sum := sha256.Sum256([]byte(filepath.Clean(repo) + "\x00" + name))
+	return "rook-loop-" + r + "-" + n + "-" + hex.EncodeToString(sum[:3])
 }
+
+// loopStartMu serialises start requests so two quick clicks can't both pass the
+// "not running" check and then kill each other's runner.
+var loopStartMu sync.Mutex
 
 // runnerPane is the state of one rook-loop-* tmux session's pane.
 type runnerPane struct {
@@ -570,10 +580,11 @@ func readLoop(ref loopRef) loopInfo {
 	}
 	li.Total = len(li.Tasks)
 	if b, err := os.ReadFile(filepath.Join(dir, "budget.json")); err == nil {
-		if json.Valid(b) {
-			li.Budget = json.RawMessage(bytes.TrimSpace(b))
+		var lb loopBudget
+		if err := json.Unmarshal(b, &lb); err == nil {
+			li.Budget = &lb
 		} else {
-			errs = append(errs, "budget.json is not valid JSON")
+			errs = append(errs, "budget.json is not valid: max_iters, max_minutes and max_attempts must be numbers")
 		}
 	}
 	if s, err := tailFile(filepath.Join(dir, "progress.md"), loopProgressTail); err == nil {
@@ -754,6 +765,8 @@ func handleLoopStart(ctx *gofr.Context) (any, error) {
 	if !ok {
 		return nil, errf(http.StatusNotFound, "no loop %q in %s", req.Name, req.Repo)
 	}
+	loopStartMu.Lock()
+	defer loopStartMu.Unlock()
 	script := loopRunnerScript()
 	if _, err := os.Stat(script); err != nil {
 		return nil, errf(http.StatusPreconditionFailed, "runner script not found at %s — install the loop-spec skill", script)
@@ -803,4 +816,12 @@ func handleLoopLog(ctx *gofr.Context) (any, error) {
 		return nil, errf(http.StatusInternalServerError, "%v", err)
 	}
 	return rawJSON(map[string]any{"log": s, "exists": true})
+}
+
+// loopBudget is the runner's budget.json. Typed fields, not raw JSON: the file
+// comes from the repo and is shown in the UI.
+type loopBudget struct {
+	MaxIters    *int `json:"max_iters,omitempty"`
+	MaxMinutes  *int `json:"max_minutes,omitempty"`
+	MaxAttempts *int `json:"max_attempts,omitempty"`
 }

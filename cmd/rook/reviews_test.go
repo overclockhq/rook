@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -251,7 +252,7 @@ func TestRunAgentArgs(t *testing.T) {
 	// the prompt spans several lines of the args file
 	assert.Contains(t, joined, "against base `main`")
 	assert.Contains(t, joined, "ONLY the tech-lead JSON")
-	for _, want := range []string{"--agent tech-lead", "--output-format json", "--max-turns 40", "--permission-mode auto", "--session-id "} {
+	for _, want := range []string{"--agent tech-lead", "--output-format json", "--max-turns 40", "--permission-mode auto", "--disallowedTools Write,Edit,MultiEdit,NotebookEdit", "--session-id "} {
 		assert.Contains(t, joined, want)
 	}
 	for _, banned := range []string{"bypassPermissions", "dangerously", "--allowedTools", "--add-dir", "acceptEdits"} {
@@ -457,9 +458,38 @@ func TestAgentInstalled(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".claude", "agents"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(home, "agents", "tech-lead.md"), []byte("x"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".claude", "agents", "finding-verifier.md"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "agents", "finding-verifier.md"), []byte("x"), 0o644))
 	assert.True(t, agentInstalled(repo, "tech-lead"), "user agent")
-	assert.True(t, agentInstalled(repo, "finding-verifier"), "project agent")
+	assert.False(t, agentInstalled(repo, "finding-verifier"), "a repo agent with the same name would replace the user's: refuse")
 	assert.False(t, agentInstalled(repo, "missing"))
+}
+
+func TestKnownRepoPath(t *testing.T) {
+	repo, other := t.TempDir(), t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "sub"), 0o755))
+	require.NoError(t, os.Symlink(repo, filepath.Join(other, "link")))
+	prev := knownRepoPathFn
+	knownRepoPathFn = func() []string { return []string{repo, "/does/not/exist"} }
+	t.Cleanup(func() { knownRepoPathFn = prev })
+
+	assert.True(t, knownRepoPath(repo))
+	assert.True(t, knownRepoPath(filepath.Join(repo, "sub")), "inside a known repo")
+	assert.True(t, knownRepoPath(filepath.Join(other, "link")), "symlink to a known repo resolves")
+	assert.False(t, knownRepoPath(other), "unknown directory")
+	assert.False(t, knownRepoPath(repo+"-sibling"), "prefix of the name is not inside")
+	assert.False(t, knownRepoPath(filepath.Join(repo, "missing")))
+}
+
+func TestValidateReviewReq_UnknownRepoRefused(t *testing.T) {
+	repo := gitInitRepo(t)
+	prev := knownRepoPathFn
+	knownRepoPathFn = func() []string { return nil }
+	t.Cleanup(func() { knownRepoPathFn = prev })
+
+	_, err := validateReviewReq(reviewStartReq{Path: repo, Base: "HEAD"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "discovered repos")
 }
 
 // fakeReq is a minimal gofr.Request for calling handlers directly.
@@ -764,4 +794,44 @@ func TestScanReviewRunNullLists(t *testing.T) {
 	assert.NotNil(t, runs[0].BlastRadius, "the UI expects arrays, never null")
 	assert.NotNil(t, runs[0].Findings)
 	assert.NotNil(t, runs[0].Questions)
+}
+
+// Review tests create their repos under the temp dir; treat it as discovered.
+func init() { knownRepoPathFn = func() []string { return []string{os.TempDir()} } }
+
+func TestKillReviewProcs(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "sleep 60 & wait")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	trackReviewProc(cmd.Process.Pid, true)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	assert.Equal(t, 1, killReviewProcs())
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("review agent's process group still running after shutdown kill")
+	}
+	assert.Equal(t, 0, killReviewProcs(), "killed processes are no longer tracked")
+}
+
+func TestStopReviewsOnSignal(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "sleep 60 & wait")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	trackReviewProc(cmd.Process.Pid, true)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	stopReviewsOnSignal()
+	// The handler is registered, so SIGTERM to the test process is caught, not fatal.
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGTERM))
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("review agent still running after rook received SIGTERM")
+	}
 }

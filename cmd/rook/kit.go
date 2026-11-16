@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -558,32 +557,6 @@ func kitRepoSub(repo string, parts ...string) string {
 // joined under a memory folder without escaping it.
 func kitSafeName(n string) bool {
 	return n != "" && n != "." && n != ".." && !strings.ContainsAny(n, `/\`) && filepath.Base(n) == n
-}
-
-// kitSameSite rejects cross-site browser requests to the kit endpoints. The
-// loopback guard does not stop a page on another origin from reading these
-// responses through the user's own browser, and they expose local files.
-func kitSameSite(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/kit") && kitCrossSite(r) {
-			http.Error(w, "forbidden: cross-site request", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func kitCrossSite(r *http.Request) bool {
-	switch r.Header.Get("Sec-Fetch-Site") {
-	case "cross-site", "same-site":
-		return true
-	}
-	o := r.Header.Get("Origin")
-	if o == "" {
-		return false
-	}
-	u, err := url.Parse(o)
-	return err != nil || u.Host != r.Host
 }
 
 // kitResolveAllowed returns the symlink-resolved path when p is a regular file

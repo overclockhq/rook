@@ -287,9 +287,11 @@
     if (l.budget) {
       var b = l.budget;
       var parts = [];
-      if (b.max_iters != null) parts.push(b.max_iters + " passes");
-      if (b.max_minutes != null) parts.push(b.max_minutes + " min");
-      if (b.max_attempts != null) parts.push(b.max_attempts + " attempts/task");
+      // budget.json comes from the repo as-is: only finite numbers are shown.
+      var num = function (v) { var n = Number(v); return isFinite(n) && v !== null && v !== "" ? String(n) : null; };
+      if (num(b.max_iters) != null) parts.push(num(b.max_iters) + " passes");
+      if (num(b.max_minutes) != null) parts.push(num(b.max_minutes) + " min");
+      if (num(b.max_attempts) != null) parts.push(num(b.max_attempts) + " attempts/task");
       if (parts.length) budget = " · budget " + parts.join(", ");
     }
 

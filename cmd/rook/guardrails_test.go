@@ -842,3 +842,14 @@ func TestRunSelftestNonZeroWithoutFailLines(t *testing.T) {
 	assert.Contains(t, res[0].Error, "exited 1: setup failed")
 	assert.Equal(t, "fail", selftestVerdict(res))
 }
+
+func TestSetGateOff_SymlinkedClaudeDirRefused(t *testing.T) {
+	repo, elsewhere := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(repo, ".claude")))
+
+	assert.Error(t, setGateOff(repo, true))
+	assert.Error(t, setGateOff(repo, false))
+
+	_, err := os.Stat(filepath.Join(elsewhere, gateOffFile))
+	assert.True(t, os.IsNotExist(err), "nothing written outside the repo")
+}

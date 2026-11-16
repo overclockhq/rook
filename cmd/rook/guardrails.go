@@ -1183,10 +1183,8 @@ func buildGuardrails() guardrailsResp {
 
 // ---- handlers -----------------------------------------------------------------
 
-// bindJSON binds a JSON body and rejects anything else, so a cross-site HTML
-// form (urlencoded or text/plain, which skip CORS preflight) cannot trigger a
-// write: only a JSON request, which a foreign origin cannot send without a
-// preflight rook never approves, gets through.
+// bindJSON binds a JSON body and rejects anything else. Cross-site protection
+// is sameOriginGuard's job; this only keeps form posts from being half-parsed.
 func bindJSON(ctx *gofr.Context, v any) error {
 	var raw json.RawMessage
 	if err := ctx.Bind(&raw); err != nil || len(raw) == 0 {
@@ -1270,7 +1268,11 @@ func handleGateToggle(ctx *gofr.Context) (any, error) {
 
 // setGateOff creates or removes <repo>/.claude/gate-off. It touches nothing else.
 func setGateOff(repo string, off bool) error {
-	p := filepath.Join(repo, ".claude", gateOffFile)
+	// A repo can commit .claude as a symlink; never follow it out of the repo.
+	p := kitRepoSub(repo, gateOffFile)
+	if p == "" {
+		return fmt.Errorf("%s/.claude is a symlink; not touching it", repo)
+	}
 	if st, err := os.Lstat(p); err == nil && !st.Mode().IsRegular() {
 		return fmt.Errorf("%s exists and is not a regular file", p)
 	}

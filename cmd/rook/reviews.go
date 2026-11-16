@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -101,7 +102,8 @@ const reviewRunsSchema = `CREATE TABLE IF NOT EXISTS review_runs (
 )`
 
 // migrateReviewRuns creates the table and fails any run a previous rook process
-// left mid-flight: its claude child died with that process.
+// left mid-flight. Its claude child may still be running if rook was killed hard;
+// the hook bridge ignores that child's lifecycle events via ROOK_REVIEW_RUN.
 func migrateReviewRuns(d *sql.DB) error {
 	if d == nil {
 		return nil // store disabled; handlers report it
@@ -319,6 +321,9 @@ func validateReviewReq(req reviewStartReq) (reviewRun, error) {
 	if !isWorkTree(run.Path) {
 		return run, errf(http.StatusBadRequest, "not a git work tree")
 	}
+	if !knownRepoPath(run.Path) {
+		return run, errf(http.StatusBadRequest, "path is not one of rook's discovered repos")
+	}
 	if run.Kind == "local" {
 		if _, err := gitOut(run.Path, "rev-parse", "--verify", "--quiet", run.Base+"^{commit}"); err != nil {
 			return run, errf(http.StatusBadRequest, "base %q is not a branch or commit in this repo", run.Base)
@@ -519,8 +524,8 @@ type agentResult struct {
 }
 
 // runAgent runs `claude -p` with a read-only agent in dir and waits for it.
-// It passes no flag that widens the agent's tools or permissions; the agents'
-// own PreToolUse hooks deny writes outside the temp directory.
+// The agent definition must be the user's own (see agentInstalled) and write
+// tools are disallowed outright, so a reviewed repo can't make the run write.
 func runAgent(ctx context.Context, dir, agent, prompt string) agentResult {
 	sid := newSessionID()
 	reviewMu.Lock()
@@ -540,6 +545,7 @@ func runAgent(ctx context.Context, dir, agent, prompt string) agentResult {
 		"--output-format", "json",
 		"--max-turns", strconv.Itoa(reviewMaxTurns),
 		"--permission-mode", "auto",
+		"--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit",
 		"--session-id", sid,
 	)
 	cmd.Dir = dir
@@ -557,7 +563,12 @@ func runAgent(ctx context.Context, dir, agent, prompt string) agentResult {
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	runErr := cmd.Run()
+	runErr := cmd.Start()
+	if runErr == nil {
+		trackReviewProc(cmd.Process.Pid, true)
+		runErr = cmd.Wait()
+		trackReviewProc(cmd.Process.Pid, false)
+	}
 
 	res := agentResult{raw: clipBytes(stdout.String(), maxRawBytes), stderr: tail(stderr.String(), 2000)}
 	env, perr := parseEnvelope(stdout.Bytes())
@@ -841,12 +852,13 @@ func handleReviewStart(ctx *gofr.Context) (any, error) {
 // agentInstalled reports whether a Claude Code agent definition exists for
 // the user or the repo, so a run fails fast instead of after a claude start.
 func agentInstalled(repoDir, name string) bool {
-	for _, dir := range []string{filepath.Join(claudeDir(), "agents"), filepath.Join(repoDir, ".claude", "agents")} {
-		if _, err := os.Stat(filepath.Join(dir, name+".md")); err == nil {
-			return true
-		}
+	// A repo-local agent of the same name would take precedence over the user's,
+	// letting the reviewed repo swap the read-only reviewer for its own.
+	if _, err := os.Lstat(filepath.Join(repoDir, ".claude", "agents", name+".md")); err == nil {
+		return false
 	}
-	return false
+	_, err := os.Stat(filepath.Join(claudeDir(), "agents", name+".md"))
+	return err == nil
 }
 
 // handleReviewList backs GET /api/reviews (newest first, no raw output).
@@ -933,4 +945,76 @@ func newSessionID() string {
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// Process groups of running review agents, so a rook shutdown can stop them
+// instead of leaving Opus sessions running against the user's checkout.
+var (
+	reviewProcMu sync.Mutex
+	reviewProcs  = map[int]bool{}
+)
+
+func trackReviewProc(pid int, running bool) {
+	reviewProcMu.Lock()
+	defer reviewProcMu.Unlock()
+	if running {
+		reviewProcs[pid] = true
+	} else {
+		delete(reviewProcs, pid)
+	}
+}
+
+// killReviewProcs kills every running review agent's process group and
+// returns how many it signalled.
+func killReviewProcs() int {
+	reviewProcMu.Lock()
+	defer reviewProcMu.Unlock()
+	n := 0
+	for pid := range reviewProcs {
+		if syscall.Kill(-pid, syscall.SIGKILL) == nil {
+			n++
+		}
+		delete(reviewProcs, pid)
+	}
+	return n
+}
+
+// stopReviewsOnSignal kills running review agents when rook gets SIGINT or
+// SIGTERM. GoFr receives the same signal for its own graceful shutdown.
+func stopReviewsOnSignal() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ch
+		killReviewProcs()
+	}()
+}
+
+// knownRepoPathFn lists the checkouts a review may run in; a var so tests can
+// supply their own without scanning the machine.
+var knownRepoPathFn = func() []string {
+	var out []string
+	for _, r := range discoverRepos() {
+		out = append(out, r.Path)
+	}
+	return out
+}
+
+// knownRepoPath reports whether p is (inside) a repo rook discovered itself,
+// so a request can't point a review at an arbitrary directory.
+func knownRepoPath(p string) bool {
+	rp, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return false
+	}
+	for _, r := range knownRepoPathFn() {
+		rr, err := filepath.EvalSymlinks(r)
+		if err != nil {
+			continue
+		}
+		if rp == rr || strings.HasPrefix(rp, rr+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
