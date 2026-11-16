@@ -14,7 +14,7 @@
   var POLL_MS = 5000;
   var lv = {
     host: null, ctx: null, data: null, error: null, loading: false, lastFetch: 0,
-    sel: null, tab: "loops", log: "", logKey: null, logExists: false, busy: {},
+    sel: null, tab: null, log: "", logKey: null, logExists: false, busy: {}, state: null,
     sigList: null, sigDetail: null, sigRecent: null
   };
 
@@ -85,7 +85,22 @@
       ".op-loops .bad{color:var(--danger)}",
       ".op-loops .op-empty .h{max-width:520px;line-height:1.6;font-family:var(--sans)}",
       ".op-loops .op-empty code{font-family:var(--mono);color:var(--ink-2)}",
-      "@media (max-width:1100px){.op-loops .lp-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.op-loops .lp-panes{grid-template-columns:minmax(0,1fr)}}"
+      "@media (max-width:1100px){.op-loops .lp-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.op-loops .lp-panes{grid-template-columns:minmax(0,1fr)}}",
+      ".op-loops .gl{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:2px}",
+      ".op-loops .gcard{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:12px 14px;display:flex;flex-direction:column;gap:8px}",
+      ".op-loops .gcard .g1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}",
+      ".op-loops .gcard .gst{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-3)}",
+      ".op-loops .gcard .gst.active{color:var(--busy);border-color:var(--busy)}",
+      ".op-loops .gcard .gst.met{color:var(--ok);border-color:var(--ok)}",
+      ".op-loops .gcard .gst.ended{color:var(--ink-4)}",
+      ".op-loops .gcard .gt{font-weight:500;color:var(--ink)}",
+      ".op-loops .gcard .gm{font-size:12px;color:var(--ink-4);font-family:var(--mono)}",
+      ".op-loops .gcard .gc{font-size:13px;color:var(--ink-2);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:7.5em;overflow:hidden}",
+      ".op-loops .gcard .gc.open{max-height:none}",
+      ".op-loops .gcard .gn{font-size:12px;color:var(--ink-3)}",
+      ".op-loops .gcard .ga{display:flex;gap:8px}",
+      ".op-loops .gcard button{height:26px;padding:0 10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);font-size:12px;cursor:pointer}",
+      ".op-loops .gcard button:hover{color:var(--ink)}",
     ].join("");
     document.head.appendChild(s);
   }
@@ -173,7 +188,7 @@
     if (!host.querySelector(".lp-head")) {
       host.innerHTML =
         '<div class="lp-head">' +
-          '<div class="lp-tabs"><button class="lp-tab" data-tab="loops">Loops</button><button class="lp-tab" data-tab="recent">Recent passes</button></div>' +
+          '<div class="lp-tabs"><button class="lp-tab" data-tab="goals" title="/goal running inside a Claude session">Goals</button><button class="lp-tab" data-tab="loops" title="Unattended .loop/ runners, one fresh session per task">Loops</button><button class="lp-tab" data-tab="recent">Recent passes</button></div>' +
           '<span class="meta"></span>' +
         "</div>" +
         '<div class="lp-main" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>';
@@ -181,13 +196,24 @@
         b.addEventListener("click", function () { lv.tab = b.dataset.tab; lv.sigList = lv.sigDetail = lv.sigRecent = null; paint(); });
       });
     }
-    host.querySelectorAll(".lp-tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === lv.tab); });
     var ls = d.loops || [];
+    var gs = goals();
+    // Until the user picks a tab, open the one that has something in it.
+    var tab = lv.tab || (gs.length || !ls.length ? "goals" : "loops");
+    host.querySelectorAll(".lp-tab").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.tab === tab);
+      if (b.dataset.tab === "goals") b.textContent = "Goals" + (gs.length ? " " + gs.length : "");
+      if (b.dataset.tab === "loops") b.textContent = "Loops" + (ls.length ? " " + ls.length : "");
+    });
     var running = ls.filter(function (l) { return l.running; }).length;
-    host.querySelector(".lp-head .meta").textContent = ls.length + " loop" + (ls.length === 1 ? "" : "s") + (running ? " · " + running + " running" : "") + (lv.error ? " · refresh failed" : "");
+    var activeGoals = gs.filter(function (s) { return goalStatus(s) === "active"; }).length;
+    host.querySelector(".lp-head .meta").textContent =
+      gs.length + " goal" + (gs.length === 1 ? "" : "s") + (activeGoals ? " (" + activeGoals + " active)" : "") + " · " +
+      ls.length + " loop" + (ls.length === 1 ? "" : "s") + (running ? " (" + running + " running)" : "") + (lv.error ? " · refresh failed" : "");
 
     var main = host.querySelector(".lp-main");
-    if (lv.tab === "recent") { paintRecent(main); return; }
+    if (tab === "goals") { paintGoals(main, gs); return; }
+    if (tab === "recent") { paintRecent(main); return; }
     if (!ls.length) {
       lv.sigList = lv.sigDetail = lv.sigRecent = null;
       main.innerHTML = '<div class="op-empty">' + c.icon.loop +
@@ -329,6 +355,64 @@
 
   function lastLine(s) { var a = String(s).trim().split("\n"); return a[a.length - 1]; }
 
+  // Sessions running a /goal, from the live state the shell polls every 2s.
+  function goals() {
+    var ss = (lv.state && lv.state.sessions) || [];
+    return ss.filter(function (s) { return s.goal && s.goal.condition; }).sort(function (a, b) {
+      var ra = goalStatus(a) === "active" ? 0 : 1, rb = goalStatus(b) === "active" ? 0 : 1;
+      return ra - rb || (b.goal.setAt || 0) - (a.goal.setAt || 0);
+    });
+  }
+
+  function goalStatus(s) {
+    if (s.goal.met) return "met";
+    if (s.goal.cleared) return "cleared";
+    if (s.alive === false || s.status === "done") return "ended";
+    return "active";
+  }
+
+  var GOAL_LABEL = { active: "Working toward it", met: "Met", cleared: "Cleared", ended: "Session ended" };
+
+  function paintGoals(main, gs) {
+    var c = lv.ctx;
+    lv.sigList = lv.sigDetail = lv.sigRecent = null;
+    if (!gs.length) {
+      main.innerHTML = '<div class="op-empty">' + c.icon.loop +
+        '<div class="t">No goals running</div>' +
+        '<div class="h">A goal keeps one Claude session working until a condition is true: after each round a Stop hook checks it, and Claude carries on if it isn\'t met yet. ' +
+        "Type <code>/goal &lt;condition&gt;</code> in any Claude session and it shows up here. For a list of tasks run unattended overnight, use a loop instead (Loops tab).</div></div>";
+      return;
+    }
+    var sig = JSON.stringify(gs.map(function (s) { return [s.sessionId, s.goal, s.status, s.alive]; }));
+    if (main.dataset.sig === sig && main.querySelector(".gl")) return; // nothing changed: keep scroll and expanded cards
+    main.dataset.sig = sig;
+    var open = {};
+    main.querySelectorAll(".gc.open").forEach(function (el) { open[el.dataset.id] = true; });
+    var top = (main.querySelector(".gl") || {}).scrollTop || 0;
+    var now = c.now();
+    main.innerHTML = '<div class="gl">' + gs.map(function (s) {
+      var g = s.goal, st = goalStatus(s);
+      var bits = [c.esc(s.project || s.cwd || "")];
+      if (s.model) bits.push(c.esc(c.shortModel(s.model)));
+      if (g.setAt) bits.push("set " + c.esc(c.ago(g.setAt, now)) + " ago");
+      bits.push(g.checkIns + " check-in" + (g.checkIns === 1 ? "" : "s"));
+      if (g.lastCheckIn) bits.push("last " + c.esc(c.ago(g.lastCheckIn, now)) + " ago");
+      if (g.met && g.metAt) bits.push("met " + c.esc(c.ago(g.metAt, now)) + " ago");
+      return '<div class="gcard">' +
+        '<div class="g1"><span class="gst ' + st + '">' + GOAL_LABEL[st] + '</span><span class="gt">' + c.esc(s.title || s.project || "session") + "</span></div>" +
+        '<div class="gm">' + bits.join(" · ") + "</div>" +
+        '<div class="gc' + (open[s.sessionId] ? " open" : "") + '" data-id="' + c.esc(s.sessionId) + '" title="Click to expand">' + c.esc(g.condition) + "</div>" +
+        (g.lastNote && st === "active" ? '<div class="gn">Last check: ' + c.esc(g.lastNote) + "</div>" : "") +
+        '<div class="ga"><button data-open="' + c.esc(s.sessionId) + '">Open session</button></div>' +
+        "</div>";
+    }).join("") + "</div>";
+    var gl = main.querySelector(".gl"); gl.scrollTop = top;
+    gl.querySelectorAll(".gc").forEach(function (el) { el.addEventListener("click", function () { el.classList.toggle("open"); }); });
+    gl.querySelectorAll("button[data-open]").forEach(function (b) {
+      b.addEventListener("click", function () { c.selectAgent(b.dataset.open); });
+    });
+  }
+
   function paintRecent(main) {
     var c = lv.ctx, rs = (lv.data && lv.data.recent) || [];
     var sig = JSON.stringify(rs.length ? [rs[0].at, rs.length, Math.floor(c.now() / 30000)] : []);
@@ -364,6 +448,7 @@
     },
     render: function (state, ctx) {
       lv.ctx = ctx || lv.ctx;
+      lv.state = state || lv.state;
       if (!lv.host || !lv.host.isConnected) return;
       fetchLoops(false);
       paint();

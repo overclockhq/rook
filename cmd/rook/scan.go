@@ -64,6 +64,7 @@ type Session struct {
 	SpawnedByRook bool     `json:"spawnedByRook"` // rook launched this agent (vs started by hand in a terminal)
 	ToolCalls   []ToolCall `json:"toolCalls"`   // most recent first
 	Health      *Health    `json:"health,omitempty"` // watchdog assessment (nil if healthy)
+	Goal        *SessionGoal `json:"goal,omitempty"` // a /goal running in this session
 }
 
 // ToolCall is a single tool invocation summarized for humans.
@@ -136,6 +137,60 @@ type State struct {
 	Env        Environment   `json:"env"`
 }
 
+// SessionGoal is a /goal running inside a session: Claude keeps working until
+// the condition holds, and a Stop hook checks it each time Claude stops.
+type SessionGoal struct {
+	Condition   string `json:"condition"`
+	SetAt       int64  `json:"setAt"`
+	Met         bool   `json:"met"`
+	MetAt       int64  `json:"metAt,omitempty"`
+	Cleared     bool   `json:"cleared,omitempty"`
+	CheckIns    int    `json:"checkIns"`              // rounds the condition was checked and not yet met
+	LastCheckIn int64  `json:"lastCheckIn,omitempty"`
+	LastNote    string `json:"lastNote,omitempty"` // first line of the latest check-in, condition removed
+}
+
+// trackGoal updates p.goal from one transcript line. /goal leaves a
+// goal_status attachment when set (and when met) and a "Goal check-in: «…»"
+// user message each round it is still unmet.
+func trackGoal(p *parsedTranscript, tl *transcriptLine, ts int64) {
+	if a := tl.Attachment; a != nil && a.Type == "goal_status" {
+		if a.Condition != "" && (p.goal == nil || p.goal.Condition != a.Condition || p.goal.Met || p.goal.Cleared) {
+			p.goal = &SessionGoal{Condition: a.Condition, SetAt: ts}
+		}
+		if a.Met && p.goal != nil {
+			p.goal.Met, p.goal.MetAt = true, ts
+		}
+		return
+	}
+	if tl.Type != "user" || tl.Message == nil || p.goal == nil {
+		return
+	}
+	var text string
+	if json.Unmarshal(tl.Message.Content, &text) != nil {
+		return
+	}
+	switch {
+	case strings.HasPrefix(text, "Goal check-in"):
+		p.goal.CheckIns++
+		p.goal.LastCheckIn = ts
+		note := text
+		if i := strings.Index(note, "»"); i >= 0 {
+			note = note[i+len("»"):]
+		}
+		if i := strings.IndexByte(note, '\n'); i >= 0 {
+			note = note[:i]
+		}
+		note = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(note), ":"))
+		note = strings.TrimPrefix(strings.TrimPrefix(note, "is still active, and "), "is still active")
+		p.goal.LastNote = strings.TrimSpace(note)
+	case strings.HasPrefix(text, "Goal cleared"), strings.HasPrefix(text, "Goal removed"):
+		p.goal.Cleared = true
+	case strings.HasPrefix(text, "Goal met"), strings.HasPrefix(text, "Goal achieved"):
+		p.goal.Met, p.goal.MetAt = true, ts
+	}
+}
+
 // ---------- transcript parsing (mtime-cached) ----------
 
 // usageEvent is one assistant message's token accounting.
@@ -163,6 +218,7 @@ type parsedTranscript struct {
 	hasPending   bool
 	tokensTotal  int64
 	contextTokens int64 // input+cacheRead+cacheWrite of the most recent turn = current window fill
+	goal          *SessionGoal // latest /goal set in this session, if any
 }
 
 // transcriptCache holds one incremental parser per transcript. Live sessions
@@ -222,6 +278,11 @@ type transcriptLine struct {
 	LastPrompt    json.RawMessage `json:"lastPrompt"`
 	Timestamp     string          `json:"timestamp"`
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	Attachment    *struct {
+		Type      string `json:"type"`
+		Condition string `json:"condition"`
+		Met       bool   `json:"met"`
+	} `json:"attachment"`
 	Message       *struct {
 		Model   string `json:"model"`
 		Content json.RawMessage `json:"content"`
@@ -314,6 +375,7 @@ func (st *transcriptState) consume(line []byte) {
 			}
 		}
 	}
+	trackGoal(p, &tl, parseTS(tl.Timestamp))
 	if tl.Type != "assistant" || tl.Message == nil {
 		return
 	}
@@ -363,6 +425,10 @@ func (st *transcriptState) snapshot() *parsedTranscript {
 	cp.usage = append([]usageEvent(nil), st.p.usage...)
 	cp.tools = append([]ToolCall(nil), st.p.tools...)
 	cp.changedFiles = dedupeKeepLast(append([]string(nil), st.p.changedFiles...))
+	if st.p.goal != nil {
+		g := *st.p.goal
+		cp.goal = &g
+	}
 	return &cp
 }
 
@@ -911,6 +977,7 @@ func ScanSessions(maxTools int) []Session {
 				s.ToolResults = p.toolResults
 				s.ToolErrors = p.toolErrors
 				s.ChangedFiles = p.changedFiles
+				s.Goal = p.goal
 				if s.Status == "waiting" {
 					s.Asking = describeWaiting(p)
 				}
