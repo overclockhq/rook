@@ -281,7 +281,7 @@
 
   // registry for plug-in views (operator-<name>.js register window.OP_VIEWS[name])
   window.OP_VIEWS = window.OP_VIEWS || {};
-  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", notifications: "Notifications", loops: "Loops", kit: "Agents & skills" };
+  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", notifications: "Notifications", loops: "Loops", kit: "Agents & skills", reviews: "Reviews" };
   var extRender = null; // active plug-in view's render() for live refresh on poll
 
   function setView(v) {
