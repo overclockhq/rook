@@ -22,6 +22,7 @@
 
   // ---- icons (inline, one stroke set) --------------------------------------
   var I = {
+    loop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>',
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
@@ -280,7 +281,7 @@
 
   // registry for plug-in views (operator-<name>.js register window.OP_VIEWS[name])
   window.OP_VIEWS = window.OP_VIEWS || {};
-  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", notifications: "Notifications" };
+  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", notifications: "Notifications", loops: "Loops" };
   var extRender = null; // active plug-in view's render() for live refresh on poll
 
   function setView(v) {
