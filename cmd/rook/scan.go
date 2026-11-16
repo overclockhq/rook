@@ -946,8 +946,34 @@ func ScanSessions(maxTools int) []Session {
 		}
 		out = append(out, s)
 	}
+	out = append(out, missingSpawns(out, paneSessions, spawned)...)
 	sortSessions(out)
 	return out
+}
+
+// missingSpawns covers agents that hold a tmux name but have not reported a
+// session file yet. It reuses the pane map the scan already has, and only pays
+// for a tmux call when a spawned name is genuinely unaccounted for.
+func missingSpawns(scanned []Session, paneSessions map[string]string, spawned map[string]bool) []Session {
+	if len(spawned) == 0 || len(paneSessions) == 0 {
+		return nil
+	}
+	covered := make(map[string]bool, len(scanned))
+	for _, s := range scanned {
+		if s.TmuxPane != "" {
+			covered[paneSessions[s.TmuxPane]] = true
+		}
+	}
+	missing := map[string]bool{}
+	for _, name := range paneSessions {
+		if spawned[name] && !covered[name] {
+			missing[name] = true
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return orphanSpawns(liveTmuxSessions(missing), covered, spawned, time.Now().UnixMilli())
 }
 
 // sortSessions orders sessions alive-first, then by most recent activity.

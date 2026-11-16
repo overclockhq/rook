@@ -52,6 +52,24 @@ func TestReviewPromptIsReadOnly(t *testing.T) {
 			t.Errorf("review prompt missing %q", must)
 		}
 	}
+	// claim discipline: every asserted fact must name its source, and anything
+	// the reviewer could not check must be labelled rather than stated flatly
+	for _, must := range []string{"CODE claim", "RUNTIME claim", "unverified"} {
+		if !contains(p, must) {
+			t.Errorf("review prompt missing claim-discipline marker %q", must)
+		}
+	}
+	// the reviewer must read the pre-change code and hunt for existing helpers
+	// before accepting that new code needed to be written at all
+	for _, must := range []string{"git show", "already"} {
+		if !contains(p, must) {
+			t.Errorf("review prompt missing reuse/context marker %q", must)
+		}
+	}
+	// resource cost of the change is a review class, not an afterthought
+	if !contains(p, "Resource cost") {
+		t.Errorf("review prompt missing resource-cost class")
+	}
 	// when a fork base is known, the reviewer is told to include committed work
 	// (not just uncommitted) — otherwise it SHIPs on an empty git diff
 	based := reviewPrompt("", "abc123")

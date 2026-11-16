@@ -32,6 +32,13 @@ type Config struct {
 	JiraBase       string `json:"jiraBase"`       // e.g. https://acme.atlassian.net
 	JiraEmail      string `json:"jiraEmail"`
 	JiraToken      string `json:"jiraToken"`
+	// PR board scope — the org and repos you pinned, so the board opens on
+	// your work instead of asking again every session.
+	BoardOrg   string   `json:"boardOrg"`
+	BoardRepos []string `json:"boardRepos"`
+	// Folders to scan for git checkouts, on top of the built-in guesses, so the
+	// launcher resolves a working directory instead of asking for one.
+	RepoRoots []string `json:"repoRoots"`
 }
 
 func configPath() string {

@@ -113,7 +113,7 @@
       ".op-audit td.cmd{max-width:0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font-family:var(--mono);font-size:11.5px}",
       ".op-audit td.cmd .rf{color:var(--danger);font-weight:600;margin-right:6px}",
       ".op-audit td.cmd .aud-tool{color:var(--busy);border:1px solid currentColor;border-radius:4px;padding:0 4px;font-size:10px;font-weight:600}",
-      ".op-audit th.act,.op-audit td.act{width:112px;text-align:right;white-space:nowrap}",
+      ".op-audit th.act,.op-audit td.act{width:164px;text-align:right;white-space:nowrap}",
       ".op-audit td.act .row-act{display:inline-flex;gap:6px;justify-content:flex-end}",
       ".op-audit .aud-msg{position:absolute;inset:0;display:grid;place-items:center}"
     ].join("");

@@ -11,6 +11,11 @@
     blocked:  { label: "Blocked",  col: "var(--danger)"  },
     verify:   { label: "Verify",   col: "var(--coral)"   }
   };
+  // the KIND cell already shows a coloured dot + label, so a leading status
+  // emoji in the title is duplicate signal that renders flush against the text
+  function stripLeadEmoji(s) {
+    return String(s).replace(/^[\u2600-\u27BF\uFE0F\u2B00-\u2BFF\uD83C-\uDBFF\uDC00-\uDFFF]+\s*/, "");
+  }
   var PER = 20;
   var items = [];       // last fetched, newest first
   var filter = "all";
@@ -99,7 +104,7 @@
         '<td class="nf-t-time">' + ctx.ago(n.ts, now) + "</td>" +
         '<td class="nf-t-kind"><span class="nf-kbadge" style="color:' + k.col + '"><span class="nf-kdot" style="background:' + k.col + '"></span>' + esc(k.label) + "</span></td>" +
         '<td class="nf-t-proj"><span class="nf-proj">' + esc(n.project || "—") + "</span></td>" +
-        '<td><div class="nf-msg-t">' + esc(n.title || "") + "</div>" + (n.body ? '<div class="nf-msg-b">' + esc(n.body) + "</div>" : "") + "</td>" +
+        '<td><div class="nf-msg-t">' + esc(stripLeadEmoji(n.title || "")) + "</div>" + (n.body ? '<div class="nf-msg-b">' + esc(n.body) + "</div>" : "") + "</td>" +
         '<td class="nf-t-ch">' + (chans || '<span style="color:var(--ink-4)">—</span>') + "</td>" +
       "</tr>";
     }).join("");

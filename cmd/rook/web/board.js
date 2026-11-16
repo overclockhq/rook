@@ -1,21 +1,62 @@
-// board.js — live status board for rook. Cards reflect each agent's derived
-// state; you act from a card, you don't drag to force a state.
-// Self-contained: exposes window.renderBoardV2(mountEl, {sessions, chains}, cb).
-// No dependency on app.js internals; the caller wires cb.* to its own handlers.
+// board.js — the pull-request board.
+//
+// Two lanes, because they are two different jobs: pull requests you raised (is
+// anything blocking them?) and pull requests waiting on your review (what is
+// blocked on you?). Cards surface the things that decide whether you can act —
+// CI, merge conflicts, unresolved threads, review size, how long it has waited —
+// so you rarely have to open the PR to know what to do next.
+//
+// Exposes window.renderPRBoard(mountEl, ctx). Server does the bucketing
+// (/api/prboard); this file only renders and wires actions.
 (function () {
   "use strict";
 
-  // Fixed columns. "Worktrees" is honest — the column holds agents running in an
-  // isolated worktree, which isn't the same as "in review".
-  var COLS = [
-    { key: "queued", label: "Queued" },
-    { key: "working", label: "Working" },
-    { key: "needs", label: "Needs you" },
-    { key: "review", label: "Worktrees" },
-    { key: "done", label: "Idle / Done" },
+  var LANES = [
+    {
+      key: "mine",
+      label: "My pull requests",
+      hint: "what is blocking my work from landing",
+      cols: [
+        { key: "waiting", label: "Waiting on review", tone: "busy" },
+        { key: "changes", label: "Changes requested", tone: "danger" },
+        { key: "approved", label: "Approved", tone: "ok" },
+        { key: "draft", label: "Draft", tone: "idle" },
+        { key: "merged", label: "Landed · 7d", tone: "idle" },
+      ],
+    },
+    {
+      key: "review",
+      label: "Awaiting my review",
+      hint: "what is blocked on me",
+      cols: [
+        { key: "requested", label: "Review requested", tone: "waiting" },
+        { key: "commented", label: "I'm involved", tone: "idle" },
+        { key: "approved_by_me", label: "I approved", tone: "ok" },
+      ],
+    },
   ];
-  // Which columns get a "+ New task" affordance at the top.
-  var NEW_TASK_COLS = { queued: true, working: true };
+
+  var state = {
+    prs: [],
+    login: "",
+    org: "",
+    repos: [],       // pinned "owner/name"
+    orgs: [],
+    repoOptions: [], // repos in the selected org, for the picker
+    loading: false,
+    error: "",
+    fetchedAt: 0,
+    repoQuery: "",
+    pickerOpen: false,
+    reposLoading: false,
+    reposError: "",
+    expanded: {},   // colKey -> true once you ask to see the whole column
+  };
+
+  // Rows shown per state group before the tail collapses, so one busy group
+  // cannot push the other lane off the screen.
+  var GROUP_LIMIT = 8;
+  var mount = null, ctx = null;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -23,219 +64,476 @@
     });
   }
 
-  function fmtTokens(n) {
-    if (n == null) return "";
-    if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
-    if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  function unwrap(d) { return d && d.data !== undefined ? d.data : d; }
+
+  async function api(path, opts) {
+    var res = await fetch(path, Object.assign({ cache: "no-store" }, opts || {}));
+    var body = await res.json().catch(function () { return {}; });
+    if (!res.ok) {
+      var d = unwrap(body) || {};
+      throw new Error((d.error && (d.error.message || d.error)) || d.message || "request failed");
+    }
+    return unwrap(body);
+  }
+
+  // ---- formatting ---------------------------------------------------------
+  function ago(iso) {
+    if (!iso) return "";
+    var ms = Date.now() - new Date(iso).getTime();
+    if (ms < 0) ms = 0;
+    var m = Math.floor(ms / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return m + "m";
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + "h";
+    var d = Math.floor(h / 24);
+    if (d < 30) return d + "d";
+    return Math.floor(d / 30) + "mo";
+  }
+  // staleDays drives the "this has been sitting too long" cue — the single most
+  // useful signal on a review queue.
+  function days(iso) {
+    if (!iso) return 0;
+    return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  }
+  function num(n) {
+    n = +n || 0;
+    if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k";
     return String(n);
   }
-
-  function statusOf(s) {
-    return s.alive ? (s.status || "idle") : "dead";
+  // A reviewer's first question is "how big is this?" — bucketing the churn into
+  // a size class answers it faster than two raw numbers do.
+  function sizeClass(pr) {
+    var n = (+pr.additions || 0) + (+pr.deletions || 0);
+    if (n < 30) return { k: "XS", n: n };
+    if (n < 150) return { k: "S", n: n };
+    if (n < 600) return { k: "M", n: n };
+    if (n < 2000) return { k: "L", n: n };
+    return { k: "XL", n: n };
   }
 
-  // columnFor auto-places a session by its live state.
-  function columnFor(s) {
-    var st = statusOf(s);
-    if (st === "waiting" || (s.health && s.health.level === "alert")) return "needs";
-    if (s.alive && (st === "busy" || st === "shell")) return "working";
-    if ((s.cwd || "").indexOf("/.rook/worktrees/") !== -1) return "review";
-    return "done";
+  // ---- rows ---------------------------------------------------------------
+  // Every row is one line on a shared column grid, so the eye can run straight
+  // down repo, size, blockers and age without re-finding them per item. Cards
+  // of ragged height cannot do that, which is what made the first pass read as
+  // a jumble.
+  function sizeOf(pr) {
+    var n = (+pr.additions || 0) + (+pr.deletions || 0);
+    return n < 30 ? "XS" : n < 150 ? "S" : n < 600 ? "M" : n < 2000 ? "L" : "XL";
   }
 
-  function iconBtn(label, cls) {
-    return '<button type="button" class="bv-btn ' + cls + '">' + esc(label) + "</button>";
+  // One blocker per row, worst first. A row of five chips is noise; the single
+  // reason this PR cannot move is signal.
+  function blockerOf(pr) {
+    if (pr.mergeable === "CONFLICTING") return { t: "conflicts", k: "bad" };
+    if (pr.checks === "FAILURE" || pr.checks === "ERROR") return { t: "checks failed", k: "bad" };
+    if (pr.unresolved > 0) return { t: pr.unresolved + " unresolved", k: "warn" };
+    if (pr.checks === "PENDING") return { t: "checks running", k: "mute" };
+    if (pr.isDraft) return { t: "draft", k: "mute" };
+    return null;
   }
 
-  // buildSessionCard returns a card element for one session.
-  function buildSessionCard(s, colKey, cb) {
-    var st = statusOf(s);
-    var waiting = st === "waiting";
-    var card = document.createElement("div");
-    card.className = "bv-card";
-    card.dataset.id = s.sessionId;
-    card.dataset.col = colKey;
+  // Who the row is waiting on. On your own PRs that is the reviewers and their
+  // verdict; on someone else's it is simply the author.
+  function peopleOf(pr) {
+    if (!pr.mine) return { t: "@" + (pr.author || "?"), k: "" };
+    if (pr.changesRequested) return { t: pr.changesRequested + " blocking", k: "bad" };
+    if (pr.approvals) return { t: pr.approvals + " approved", k: "ok" };
+    var r = pr.reviewers || [];
+    if (r.length === 1) return { t: "@" + r[0], k: "" };
+    if (r.length > 1) return { t: r.length + " reviewers", k: "" };
+    return { t: "no reviewers", k: "mute" };
+  }
 
-    var tokens = s.tokens7d != null ? s.tokens7d : s.tokensTotal;
-    var health = "";
-    if (s.health) {
-      var glyph = s.health.level === "alert" ? "⚠" : "●";
-      health =
-        '<span class="bv-chip bv-health h-' +
-        esc(s.health.level) +
-        '" title="' +
-        esc(s.health.reason || "") +
-        '">' +
-        glyph +
-        " " +
-        esc(s.health.reason || s.health.level) +
-        "</span>";
-    }
-    var prov = s.provider || "claude";
+  function row(pr) {
+    var b = blockerOf(pr), who = peopleOf(pr), sz = sizeOf(pr);
+    return '<div class="pr-row' + (pr.unread ? " unread" : "") + '" role="row"' +
+      ' data-url="' + esc(pr.url) + '" data-repo="' + esc(pr.repo) + '" data-num="' + pr.number +
+      '" data-head="' + esc(pr.headRef || "") + '" data-title="' + esc(pr.title) + '">' +
+      '<span class="pr-dot s-' + esc(pr.col) + '" title="' + esc(colLabel(pr.col)) + '"></span>' +
+      '<span class="pr-num">#' + pr.number + "</span>" +
+      '<span class="pr-title" title="' + esc(pr.title) + '">' + esc(pr.title) + "</span>" +
+      '<span class="pr-repo" title="' + esc(pr.repo) + " → " + esc(pr.baseRef || "") + '">' + esc(pr.repo) + "</span>" +
+      '<span class="pr-size" title="' + num(pr.additions) + " added · " + num(pr.deletions) +
+        " removed · " + (pr.changedFiles || 0) + ' files"><b class="sz s-' + sz + '">' + sz +
+        '</b><i class="add">+' + num(pr.additions) + '</i><i class="del">−' + num(pr.deletions) + "</i></span>" +
+      '<span class="pr-block">' + (b ? '<em class="bk ' + b.k + '">' + esc(b.t) + "</em>" : "") + "</span>" +
+      '<span class="pr-who ' + who.k + '" title="' + esc(who.t) + '">' + esc(who.t) + "</span>" +
+      '<span class="pr-age" title="updated ' + ago(pr.updatedAt) + ' ago">' + ago(pr.updatedAt) + "</span>" +
+      '<span class="pr-acts">' +
+        '<button class="pr-a" data-act="open">Open</button>' +
+        (pr.state === "OPEN" ? '<button class="pr-a" data-act="review">Review</button>' : "") +
+        (pr.headRef ? '<button class="pr-a" data-act="branch" title="Copy branch: ' + esc(pr.headRef) + '">Branch</button>' : "") +
+      "</span></div>";
+  }
 
-    var acts = "";
-    if (waiting) {
-      acts += iconBtn("Allow", "bv-allow");
-      acts += iconBtn("Deny", "bv-deny bv-danger");
-    }
-    if (s.controllable || s.tmuxPane) acts += iconBtn("Terminal", "bv-term");
-    if (s.cwd) acts += iconBtn("Diff", "bv-diff");
-    if (s.cwd) acts += iconBtn("Review", "bv-review");
+  function colLabel(k) {
+    var all = LANES[0].cols.concat(LANES[1].cols);
+    for (var i = 0; i < all.length; i++) if (all[i].key === k) return all[i].label;
+    return k;
+  }
 
-    card.innerHTML =
-      '<div class="bv-card-top">' +
-      '<span class="bv-dot s-' + esc(st) + '"></span>' +
-      '<span class="bv-title" title="' + esc(s.title || s.project || "session") + '">' +
-      esc(s.title || s.project || "session") +
-      "</span>" +
-      "</div>" +
-      '<div class="bv-meta">' +
-      '<span class="bv-chip bv-prov">' + esc(prov) + "</span>" +
-      (s.project ? '<span class="bv-proj">' + esc(s.project) + "</span>" : "") +
-      health +
-      (tokens != null ? '<span class="bv-tok">' + esc(fmtTokens(tokens)) + " tok</span>" : "") +
-      "</div>" +
-      (acts ? '<div class="bv-acts">' + acts + "</div>" : "");
-
-    // Card body click -> open (buttons stopPropagation).
-    card.addEventListener("click", function () {
-      if (cb.onOpen) cb.onOpen(s.sessionId);
+  function sortFor(colKey, list) {
+    // A review queue is oldest-first — that is the thing you are late on. Your
+    // own PRs are newest-first, because that is what you are working on.
+    var oldestFirst = colKey === "requested" || colKey === "commented";
+    return list.slice().sort(function (a, b) {
+      var ta = new Date(a.updatedAt || 0).getTime(), tb = new Date(b.updatedAt || 0).getTime();
+      return oldestFirst ? ta - tb : tb - ta;
     });
-    function wire(sel, fn) {
-      var b = card.querySelector(sel);
-      if (b && fn) {
-        b.addEventListener("click", function (e) {
-          e.stopPropagation();
-          fn(s.sessionId);
-        });
-      }
-    }
-    wire(".bv-allow", cb.onAllow);
-    wire(".bv-deny", cb.onDeny);
-    wire(".bv-term", cb.onTerminal);
-    wire(".bv-diff", cb.onDiff);
-    wire(".bv-review", cb.onReview);
-    // Board columns reflect each agent's real, derived state (busy/waiting/
-    // idle/…) — you can't force a state by dragging, so cards are not
-    // draggable. It's a live status board: click to open, act from the card.
-    return card;
   }
 
-  // buildQueuedCard renders a pending chain step (no session, not draggable).
-  function buildQueuedCard(q) {
-    var card = document.createElement("div");
-    card.className = "bv-card bv-card-queued";
-    card.innerHTML =
-      '<div class="bv-card-top">' +
-      '<span class="bv-dot s-idle"></span>' +
-      '<span class="bv-title" title="' + esc(q.step.name) + '">' + esc(q.step.name) + "</span>" +
-      "</div>" +
-      '<div class="bv-meta">' +
-      '<span class="bv-proj">' + esc(q.chain || "chain") + "</span>" +
-      (q.step.prompt ? '<span class="bv-tok">' + esc(q.step.prompt) + "</span>" : "") +
+  function laneHTML(lane) {
+    var inLane = state.prs.filter(function (p) { return p.lane === lane.key; });
+    if (!inLane.length) {
+      return '<section class="pr-lane"><header class="pr-lane-head">' +
+        "<h2>" + esc(lane.label) + '</h2><span class="pr-lane-hint">' + esc(lane.hint) + "</span>" +
+        '<span class="pr-lane-n">0</span></header>' +
+        '<p class="pr-lane-empty">' + esc(lane.key === "mine"
+          ? "You have no open pull requests in this scope."
+          : "Nothing is waiting on your review.") + "</p></section>";
+    }
+
+    // Only sections that actually hold something are drawn. Empty columns held
+    // open at equal width were most of the dead space in the previous layout.
+    var groups = lane.cols.map(function (c) {
+      var list = sortFor(c.key, inLane.filter(function (p) { return p.col === c.key; }));
+      if (!list.length) return "";
+      var open = !!state.expanded[c.key];
+      var shown = open ? list : list.slice(0, GROUP_LIMIT);
+      var hidden = list.length - shown.length;
+      return '<div class="pr-group">' +
+        '<div class="pr-group-head"><span class="pr-dot s-' + c.key + '"></span>' +
+          "<span>" + esc(c.label) + '</span><span class="pr-group-n">' + list.length + "</span></div>" +
+        shown.map(row).join("") +
+        (hidden > 0
+          ? '<button class="pr-more" data-more="' + c.key + '">' + hidden + " more</button>"
+          : open && list.length > GROUP_LIMIT
+            ? '<button class="pr-more" data-more="' + c.key + '">Show less</button>' : "") +
+        "</div>";
+    }).join("");
+
+    return '<section class="pr-lane">' +
+      '<header class="pr-lane-head"><h2>' + esc(lane.label) + "</h2>" +
+        '<span class="pr-lane-hint">' + esc(lane.hint) + "</span>" +
+        '<span class="pr-lane-n">' + inLane.length + "</span></header>" +
+      '<div class="pr-table">' +
+        '<div class="pr-row pr-head" role="row"><span></span><span>PR</span><span>Title</span>' +
+          "<span>Repository</span><span>Size</span><span>Blocked by</span><span>Waiting on</span>" +
+          '<span class="pr-age">Age</span><span></span></div>' +
+        groups +
+      "</div></section>";
+  }
+
+  // ---- scope bar ----------------------------------------------------------
+  // A one-line read of what actually needs you, so the board answers its own
+  // question before you scan a single column.
+  function tally() {
+    var needMe = 0, blocked = 0;
+    state.prs.forEach(function (p) {
+      if (p.lane === "review" && p.col === "requested") needMe++;
+      if (p.lane === "mine" && p.state === "OPEN" &&
+        (p.col === "changes" || p.checks === "FAILURE" || p.mergeable === "CONFLICTING")) blocked++;
+    });
+    var bits = [];
+    bits.push('<b class="' + (needMe ? "hot" : "") + '">' + needMe + "</b> need your review");
+    bits.push('<b class="' + (blocked ? "hot" : "") + '">' + blocked + "</b> of yours blocked");
+    return bits.join('<span class="pb-dot">·</span>');
+  }
+
+  // The drawer scopes the board. Organisation comes first because it decides
+  // which repositories are even listed; one filter box drives both lists so you
+  // never have to work out which field you are typing into.
+  function pickerHTML() {
+    var q = state.repoQuery.toLowerCase();
+    var match = function (v) { return !q || v.toLowerCase().indexOf(q) !== -1; };
+
+    var orgRows = [{ v: "", l: "All my repos", sub: "everything you can see" }]
+      .concat(state.orgs.map(function (o) { return { v: o, l: o, sub: "" }; }))
+      .filter(function (o) { return match(o.l); });
+
+    var orgs = orgRows.length
+      ? orgRows.map(function (o) {
+          return '<button class="pb-picker-row' + (o.v === state.org ? " on" : "") + '" data-org="' + esc(o.v) + '">' +
+            esc(o.l) + (o.sub ? ' <span class="pb-row-sub">' + esc(o.sub) + "</span>" : "") +
+            (o.v === state.org ? '<span class="pb-row-tick">✓</span>' : "") + "</button>";
+        }).join("")
+      : '<p class="pb-picker-empty">No organisation matches.</p>';
+
+    var repoRows = state.repoOptions
+      .filter(match)
+      .filter(function (r) { return state.repos.indexOf(r) === -1; })
+      .slice(0, 60);
+    var repos = state.reposLoading
+      ? '<p class="pb-picker-empty">Loading repositories…</p>'
+      : state.reposError
+        ? '<p class="pb-picker-empty">' + esc(state.reposError) + "</p>"
+        : state.repoOptions.length === 0
+          ? '<p class="pb-picker-empty">No repositories found in ' + esc(state.org || state.login || "your account") + ".</p>"
+          : repoRows.length
+            ? repoRows.map(function (r) { return '<button class="pb-picker-row" data-pin="' + esc(r) + '">' + esc(r) + "</button>"; }).join("")
+            : '<p class="pb-picker-empty">No repository matches.</p>';
+
+    return '<div class="pb-picker">' +
+      '<input class="pb-picker-in" id="pbRepoQ" placeholder="Filter organisations and repositories…" value="' +
+        esc(state.repoQuery) + '" autocomplete="off" />' +
+      '<div class="pb-picker-sec"><span class="pb-picker-h">Organisation</span>' +
+        '<div class="pb-picker-list" id="pbOrgList">' + orgs + "</div></div>" +
+      '<div class="pb-picker-sec"><span class="pb-picker-h">Pin repositories</span>' +
+        '<div class="pb-picker-list" id="pbRepoList">' + repos + "</div></div>" +
+      '<div class="pb-picker-foot"><button class="pb-btn" id="pbPickerDone">Done</button></div>' +
       "</div>";
-    return card;
   }
 
-  function buildColumn(col, cb) {
-    var wrap = document.createElement("div");
-    wrap.className = "bv-col bv-col-" + col.key;
+  function scopeHTML() {
+    var chips = state.repos.map(function (r) {
+      return '<span class="pb-pin" data-repo="' + esc(r) + '">' + esc(r.split("/").pop()) +
+        '<button class="pb-unpin" data-repo="' + esc(r) + '" title="Unpin ' + esc(r) + '" aria-label="Unpin ' + esc(r) + '">×</button></span>';
+    }).join("");
 
-    var head = document.createElement("div");
-    head.className = "bv-col-head";
-    head.innerHTML =
-      '<span class="bv-col-label">' + esc(col.label) + "</span>" +
-      '<span class="bv-col-n">0</span>';
-    wrap.appendChild(head);
+    var picker = state.pickerOpen ? pickerHTML() : "";
 
-    if (NEW_TASK_COLS[col.key]) {
-      var add = document.createElement("button");
-      add.type = "button";
-      add.className = "bv-newtask";
-      add.textContent = "+ New task";
-      add.addEventListener("click", function () {
-        if (cb.onNewTask) cb.onNewTask(col.key);
-      });
-      wrap.appendChild(add);
-    }
-
-    var body = document.createElement("div");
-    body.className = "bv-col-body";
-    body.dataset.col = col.key;
-    wrap.appendChild(body);
-
-    return { wrap: wrap, body: body, headN: head.querySelector(".bv-col-n") };
+    return '<div class="pb-scope">' +
+      '<div class="pb-scope-row">' +
+        '<span class="pb-lbl">Scope</span>' +
+        '<button class="pb-orgbtn' + (state.pickerOpen ? " on" : "") + '" id="pbAddPin" aria-expanded="' + (state.pickerOpen ? "true" : "false") + '">' +
+          esc(state.org || "All my repos") + '<span class="pb-caret">▾</span></button>' +
+        '<div class="pb-pins">' + chips + "</div>" +
+        '<span class="pb-spacer"></span>' +
+        '<span class="pb-tally">' + tally() + "</span>" +
+        '<button class="pb-btn" id="pbRefresh"' + (state.loading ? " disabled" : "") + ">" +
+          (state.loading ? "Refreshing…" : "Refresh") + "</button>" +
+      "</div>" + picker +
+      (state.repos.length
+        ? '<p class="pb-scope-note">Showing ' + state.repos.length + " pinned " + (state.repos.length === 1 ? "repository" : "repositories") + " · pins override the organisation filter and are saved.</p>"
+        : "") +
+      "</div>";
   }
 
-  // updateCounts refreshes each column header count + empty placeholder.
-  function updateCounts(mount) {
-    var cols = mount.querySelectorAll(".bv-col");
-    for (var i = 0; i < cols.length; i++) {
-      var body = cols[i].querySelector(".bv-col-body");
-      var n = body.querySelectorAll(".bv-card").length;
-      var nEl = cols[i].querySelector(".bv-col-n");
-      if (nEl) nEl.textContent = String(n);
-      var ph = body.querySelector(".bv-empty");
-      if (n === 0 && !ph) {
-        var p = document.createElement("p");
-        p.className = "bv-empty";
-        p.textContent = "—";
-        body.appendChild(p);
-      } else if (n > 0 && ph) {
-        ph.parentNode.removeChild(ph);
-      }
-    }
-  }
-
-  function renderBoardV2(mount, data, cb) {
+  // ---- render -------------------------------------------------------------
+  function render() {
     if (!mount) return;
-    cb = cb || {};
-    var sessions = (data && data.sessions) || [];
-    var chains = (data && data.chains) || [];
+    var body;
+    if (state.error) {
+      body = '<div class="pb-msg"><b>Could not load pull requests</b><p>' + esc(state.error) + "</p>" +
+        "<p class=\"dim\">The board reads GitHub through the <code>gh</code> CLI. Check <code>gh auth status</code>.</p></div>";
+    } else if (state.loading && !state.prs.length) {
+      body = '<div class="pb-msg">Loading pull requests…</div>';
+    } else if (!state.prs.length) {
+      body = '<div class="pb-msg"><b>No open pull requests in scope</b>' +
+        "<p>Nothing you raised, and nothing waiting on your review" +
+        (state.org || state.repos.length ? " in this scope" : "") + ".</p></div>";
+    } else {
+      body = LANES.map(laneHTML).join("");
+    }
+    mount.innerHTML = scopeHTML() + '<div class="pb-lanes">' + body + "</div>";
+    wire();
+  }
 
-    var buckets = { queued: [], working: [], needs: [], review: [], done: [] };
-    sessions.forEach(function (s) {
-      buckets[columnFor(s)].push(s);
+  function wire() {
+    var add = mount.querySelector("#pbAddPin");
+    if (add) add.addEventListener("click", function () {
+      state.pickerOpen = !state.pickerOpen;
+      render();
+      var inp = mount.querySelector("#pbRepoQ");
+      if (inp) inp.focus();
+      if (state.pickerOpen && !state.repoOptions.length) loadRepoOptions();
     });
-    // Rank "Needs you" by urgency: watchdog alerts first, then longest-waiting
-    // (oldest update) — so the agent most in need of you is at the top.
-    buckets.needs.sort(function (a, b) {
-      var aa = a.health && a.health.level === "alert" ? 1 : 0;
-      var ba = b.health && b.health.level === "alert" ? 1 : 0;
-      if (aa !== ba) return ba - aa;
-      return (a.updatedAt || 0) - (b.updatedAt || 0);
-    });
-    var queued = [];
-    chains.forEach(function (c) {
-      (c.steps || []).forEach(function (step) {
-        if (step.status === "pending") queued.push({ chain: c.title || c.id, step: step });
+
+    var q = mount.querySelector("#pbRepoQ");
+    if (q) {
+      q.addEventListener("input", function () {
+        state.repoQuery = q.value;
+        // repaint only the two lists — re-rendering the whole drawer would
+        // drop focus and the caret on every keystroke
+        var wrap = mount.querySelector(".pb-picker");
+        if (!wrap) return;
+        var fresh = document.createElement("div");
+        fresh.innerHTML = pickerHTML();
+        var oldO = mount.querySelector("#pbOrgList"), newO = fresh.querySelector("#pbOrgList");
+        var oldR = mount.querySelector("#pbRepoList"), newR = fresh.querySelector("#pbRepoList");
+        if (oldO && newO) oldO.innerHTML = newO.innerHTML;
+        if (oldR && newR) oldR.innerHTML = newR.innerHTML;
+        wirePicker();
+      });
+      // the operator shell binds single-letter shortcuts (g o / g b / …) on the
+      // document, so keys typed here must not escape the drawer
+      q.addEventListener("keydown", function (e) {
+        e.stopPropagation();
+        if (e.key === "Escape") { state.pickerOpen = false; render(); }
+      });
+    }
+    var done = mount.querySelector("#pbPickerDone");
+    if (done) done.addEventListener("click", function () { state.pickerOpen = false; render(); });
+    wirePicker();
+
+    mount.querySelectorAll(".pb-unpin").forEach(function (b) {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        state.repos = state.repos.filter(function (r) { return r !== b.dataset.repo; });
+        persist(); render(); load();
       });
     });
 
-    // Drop the legacy ".board" grid class: this mount keeps its id="board"
-    // but the V2 layout is flex-based, and the old .board grid rules
-    // (repeat(5, minmax(180px,1fr))) fight the flex columns and cause overlap.
-    mount.classList.remove("board");
-    mount.classList.add("board-v2");
-    mount.innerHTML = "";
-
-    COLS.forEach(function (col) {
-      var built = buildColumn(col, cb);
-      if (col.key === "queued") {
-        queued.forEach(function (q) {
-          built.body.appendChild(buildQueuedCard(q));
-        });
-      } else {
-        buckets[col.key].forEach(function (s) {
-          built.body.appendChild(buildSessionCard(s, col.key, cb));
-        });
-      }
-      mount.appendChild(built.wrap);
+    mount.querySelectorAll(".pr-more").forEach(function (b) {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var k = b.dataset.more;
+        state.expanded[k] = !state.expanded[k];
+        render();
+      });
     });
 
-    updateCounts(mount);
+    var ref = mount.querySelector("#pbRefresh");
+    if (ref) ref.addEventListener("click", function () { load(); });
+
+    mount.querySelectorAll(".pr-row:not(.pr-head)").forEach(function (c) {
+      c.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-act]");
+        if (!btn) { openURL(c.dataset.url); return; }
+        e.stopPropagation();
+        var act = btn.dataset.act;
+        if (act === "open") openURL(c.dataset.url);
+        else if (act === "review") reviewPR(c.dataset);
+        else if (act === "branch") copyBranch(c.dataset.head);
+      });
+    });
   }
 
-  window.renderBoardV2 = renderBoardV2;
+  function wirePicker() {
+    mount.querySelectorAll(".pb-picker-row[data-pin]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var r = b.dataset.pin;
+        if (state.repos.indexOf(r) === -1) state.repos.push(r);
+        state.repoQuery = "";
+        persist(); render(); load();   // drawer stays open so you can pin several
+      });
+    });
+    mount.querySelectorAll(".pb-picker-row[data-org]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        if (b.dataset.org === state.org) return;
+        state.org = b.dataset.org;
+        state.repos = [];        // pins belong to the org they came from
+        state.repoOptions = [];
+        state.repoQuery = "";
+        persist(); render(); loadRepoOptions(); load();
+      });
+    });
+  }
+
+  // ---- actions ------------------------------------------------------------
+  function openURL(u) { if (u) window.open(u, "_blank", "noopener"); }
+
+  function copyBranch(b) {
+    if (!b) return;
+    navigator.clipboard.writeText(b).then(function () {
+      if (ctx && ctx.toast) ctx.toast("Copied " + b, "ok");
+    }, function () {
+      if (ctx && ctx.toast) ctx.toast("Could not copy", "err");
+    });
+  }
+
+  // Reuse the review task the GitHub view already builds, so a PR reviewed from
+  // the board is the same session as one reviewed from anywhere else.
+  function reviewPR(d) {
+    if (!ctx || !ctx.launch) return;
+    var num = d.num, repo = d.repo;
+    ctx.launch({
+      name: "review-pr-" + num,
+      title: "Review PR #" + num,
+      worktree: true,
+      cwd: (ctx.resolveRepo && ctx.resolveRepo(repo)) || "",
+      prompt: 'Review GitHub pull request #' + num + ' in ' + repo + ': "' + d.title + '".\n' + d.url + '\n\n' +
+        'Check out the PR branch (gh pr checkout ' + num + '), read the diff, and review it for correctness, bugs, security, tests, and style. ' +
+        'Also read the repo\'s contributor/agent docs (CONTRIBUTING.md, CLAUDE.md, AGENTS.md, SKILL.md, README.md, and any other .md guidelines present) and flag anywhere the change does NOT follow those conventions. ' +
+        'Summarize findings with file:line references and concrete suggestions, citing the specific doc a violation breaks. Do not push changes unless asked.',
+    });
+  }
+
+  // ---- data ---------------------------------------------------------------
+  async function persist() {
+    try {
+      await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({}, state.cfg || {}, {
+          boardOrg: state.org,
+          boardRepos: state.repos,
+        })),
+      });
+    } catch (e) { /* pins are a convenience — never block the board on saving them */ }
+  }
+
+  async function loadRepoOptions() {
+    var owner = state.org || state.login;
+    if (!owner) return;
+    state.reposLoading = true; state.reposError = "";
+    if (state.pickerOpen) render();
+    try {
+      var rows = await api("/api/github/repos?owner=" + encodeURIComponent(owner));
+      state.repoOptions = (rows || []).map(function (r) { return r.nameWithOwner; }).filter(Boolean);
+    } catch (e) {
+      state.repoOptions = [];
+      state.reposError = "Could not list repositories: " + (e.message || e);
+    }
+    state.reposLoading = false;
+    if (state.pickerOpen) render();
+  }
+
+  async function load() {
+    state.loading = true; state.error = "";
+    render();
+    try {
+      var qs = [];
+      if (state.org) qs.push("org=" + encodeURIComponent(state.org));
+      if (state.repos.length) qs.push("repos=" + encodeURIComponent(state.repos.join(",")));
+      var d = await api("/api/prboard" + (qs.length ? "?" + qs.join("&") : ""));
+      state.prs = d.prs || [];
+      state.login = d.login || state.login;
+      state.fetchedAt = Date.now();
+    } catch (e) {
+      state.error = e.message || String(e);
+    }
+    state.loading = false;
+    render();
+  }
+
+  async function bootstrap() {
+    try {
+      var cfg = await api("/api/config");
+      state.cfg = cfg || {};
+      state.org = cfg.boardOrg || "";
+      state.repos = cfg.boardRepos || [];
+    } catch (e) { state.cfg = {}; }
+    try {
+      var o = await api("/api/github/orgs");
+      state.login = o.login || "";
+      state.orgs = o.orgs || [];
+    } catch (e) { /* the board still works unscoped without the org list */ }
+    render();
+    await load();
+    loadRepoOptions();
+  }
+
+  // GitHub data moves on its own clock, so the board refreshes on a slow timer
+  // of its own rather than riding the operator's 2s agent poll — which used to
+  // rebuild this DOM underneath an open drawer.
+  var REFRESH_MS = 60000;
+  var timer = null;
+  function startTimer() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(function () {
+      if (!mount || !mount.isConnected) return;   // view was switched away
+      if (state.pickerOpen || state.loading) return; // never yank the DOM mid-interaction
+      load();
+    }, REFRESH_MS);
+  }
+
+  window.renderPRBoard = function (mountEl, context) {
+    mount = mountEl; ctx = context || {};
+    if (!state.prs.length && !state.loading) bootstrap();
+    else render();
+    startTimer();
+  };
+  window.refreshPRBoard = function () { if (mount) load(); };
 })();

@@ -19,10 +19,10 @@ func TestSaveConfig(t *testing.T) {
 	}{
 		{
 			name:     "keeps keys this build does not know",
-			existing: `{"ntfy":"old","repoRoots":["~/code"],"boardOrg":"zopdev","boardRepos":["zopdev/a"]}`,
+			existing: `{"ntfy":"old","futureSetting":["x"],"handEdited":{"a":1}}`,
 			save:     Config{Ntfy: "new"},
 			want: map[string]any{
-				"ntfy": "new", "repoRoots": []any{"~/code"}, "boardOrg": "zopdev", "boardRepos": []any{"zopdev/a"},
+				"ntfy": "new", "futureSetting": []any{"x"}, "handEdited": map[string]any{"a": float64(1)},
 			},
 		},
 		{
