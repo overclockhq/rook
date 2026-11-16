@@ -75,7 +75,7 @@ func main() {
 	app.GET("/operator.html", staticHandler("operator.html", "text/html; charset=utf-8"))
 	app.GET("/operator.css", staticHandler("operator.css", "text/css; charset=utf-8"))
 	app.GET("/operator.js", staticHandler("operator.js", "text/javascript; charset=utf-8"))
-	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications"} {
+	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications", "guardrails"} {
 		name := "operator-" + v + ".js"
 		app.GET("/"+name, staticHandler(name, "text/javascript; charset=utf-8"))
 	}
@@ -171,6 +171,13 @@ func main() {
 	app.GET("/api/github/prs", handleGHPRs)
 	app.GET("/api/github/pr", handleGHPRDetail)
 	app.GET("/api/github/issue", handleGHIssueDetail)
+	app.GET("/api/guardrails", handleGuardrails)
+	app.GET("/api/guardrails/gate", handleGateStatus)
+	app.POST("/api/guardrails/gate", handleGateRun)
+	app.POST("/api/guardrails/gate-toggle", handleGateToggle)
+	app.GET("/api/guardrails/selftest", handleSelftestStatus)
+	app.POST("/api/guardrails/selftest", handleSelftestRun)
+	app.GET("/api/guardrails/brief", handleBrief)
 
 	url := "http://127.0.0.1:" + port + "/"
 	log.Printf("rook %s — open %s", version, url)
