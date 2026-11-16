@@ -17,7 +17,10 @@ var ignoredCommands = map[string]bool{
 // DevServers lists processes listening on TCP ports, excluding noisy daemons
 // and this dashboard's own port.
 func DevServers(selfPort int) []DevServer {
-	out, err := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN").Output()
+	// +c 0 lifts lsof's 9-character cap on the COMMAND column — without it every
+	// longer name arrives already cut ("discovere", "aggregato") with no way to
+	// tell a truncated value from a real one.
+	out, err := exec.Command("lsof", "+c", "0", "-nP", "-iTCP", "-sTCP:LISTEN").Output()
 	if err != nil {
 		return nil
 	}

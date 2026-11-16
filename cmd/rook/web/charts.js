@@ -37,8 +37,35 @@
     return typeof target === 'string' ? document.querySelector(target) : target;
   }
 
+  // niceStep picks a human-readable gridline interval (1, 2, 2.5, 5 or 10 at
+  // the right magnitude) covering range/rows.
+  function niceStep(range, rows) {
+    var raw = (range || 1) / (rows || 1);
+    var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+    var norm = raw / mag;
+    var step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+    return step * mag;
+  }
+
   function reduceMotion() {
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  // growIn animates a bar from zero width WITHOUT making the animation
+  // load-bearing: the element's resting style is always its true size, and the
+  // grow is played over it. If the animation never runs — reduced motion, a
+  // throttled frame, an off-screen or re-rendered chart — the bar is still
+  // correct, just not animated.
+  function growIn(elm, delayMs) {
+    if (reduceMotion() || !elm.animate) return;
+    elm.style.transformBox = 'fill-box';
+    elm.style.transformOrigin = 'left center';
+    try {
+      elm.animate(
+        [{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }],
+        { duration: 500, delay: delayMs || 0, easing: 'cubic-bezier(.22,.61,.36,1)', fill: 'none' }
+      );
+    } catch (e) { /* animation is decoration only — never block the render */ }
   }
 
   function esc(s) {
@@ -131,7 +158,6 @@
     opts = opts || {};
     var series = opts.series || [];
     var fmt = opts.format || fmtNum;
-    var reduce = reduceMotion();
 
     node.innerHTML = '';
     if (!series.length) { node.appendChild(emptyNote('No data')); return; }
@@ -162,13 +188,7 @@
       var w = val ? Math.max((Math.abs(val) / max) * W, 4) : 0;
       var bar = el('rect', { x: 0, y: ty, width: w, height: th, rx: 5, class: 'rc-bar' });
       bar.style.fill = color;
-      if (!reduce && w > 0) {
-        bar.style.transformBox = 'fill-box';
-        bar.style.transformOrigin = 'left center';
-        bar.style.transform = 'scaleX(0)';
-        bar.style.transition = 'transform .5s cubic-bezier(.22,.61,.36,1)';
-        bar.style.transitionDelay = (i * 40) + 'ms';
-      }
+      if (w > 0) growIn(bar, i * 40);
       svg.appendChild(bar);
 
       var hit = el('rect', { x: 0, y: y, width: W, height: rowH - 2, fill: 'transparent', class: 'rc-hit' });
@@ -182,15 +202,6 @@
     });
 
     node.appendChild(svg);
-
-    if (!reduce) {
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          var bars = svg.querySelectorAll('.rc-bar');
-          for (var i = 0; i < bars.length; i++) bars[i].style.transform = 'scaleX(1)';
-        });
-      });
-    }
   }
 
   // =======================================================================
@@ -220,6 +231,10 @@
     var max = Math.max.apply(null, vals);
     var min = Math.min.apply(null, vals.concat([0]));
     if (max === min) max = min + 1;
+    // snap the top of the scale so gridlines land on round numbers — an axis
+    // reading 0 / 844 / 1,687 / 2,531 is the raw max divided four ways, which
+    // gives a reader nothing to anchor on
+    max = min + niceStep(max - min, 4) * 4;
 
     var X = function (i) { return L + (i / (pts.length - 1)) * plotW; };
     var Y = function (v) { return T + plotH - (v - min) / (max - min) * plotH; };
@@ -410,7 +425,6 @@
     if (!node) return;
     opts = opts || {};
     var spans = opts.spans || [];
-    var reduce = reduceMotion();
 
     node.innerHTML = '';
     if (!spans.length) { node.appendChild(emptyNote('No spans')); return; }
@@ -474,7 +488,7 @@
 
       // bar on the shared axis
       var bx = X(st);
-      var bw = Math.max((dur / span) * plotW, 3);
+      var bw = Math.max((dur / span) * plotW, 6);
       var by = y + 5, bh = rowH - 10;
       var bar = el('rect', { x: bx, y: by, width: bw, height: bh, rx: 4, class: 'rc-tl-bar' });
       bar.style.fill = color;
@@ -492,13 +506,7 @@
       band.addEventListener('pointermove', moveTip);
       band.addEventListener('pointerleave', function () { band.classList.remove('rc-on'); hideTip(); });
 
-      if (!reduce) {
-        bar.style.transformBox = 'fill-box';
-        bar.style.transformOrigin = 'left center';
-        bar.style.transform = 'scaleX(0)';
-        bar.style.transition = 'transform .4s ease';
-        bar.style.transitionDelay = (i * 25) + 'ms';
-      }
+      growIn(bar, i * 25);
     });
 
     node.appendChild(svg);
@@ -510,14 +518,6 @@
       }), null, null, false));
     }
 
-    if (!reduce) {
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          var bars = svg.querySelectorAll('.rc-tl-bar');
-          for (var i = 0; i < bars.length; i++) bars[i].style.transform = 'scaleX(1)';
-        });
-      });
-    }
   }
 
   // ---- shared legend + helpers ------------------------------------------

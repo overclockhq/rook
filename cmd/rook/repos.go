@@ -128,6 +128,63 @@ func commonRepoParents() []string {
 	return out
 }
 
+// configuredRootDepth is how far below a folder you named in Settings we look.
+// Three levels covers the common "~/code/<org>/<group>/<repo>" nesting without
+// turning the scan into a full-disk walk.
+const configuredRootDepth = 3
+
+// repoScanRoots is every directory to scan: the built-in guesses plus the
+// folders set in Settings, cleaned of blanks and ~ expanded.
+func repoScanRoots(configured []string) []string {
+	out := commonRepoParents()
+	home, _ := os.UserHomeDir()
+	seen := map[string]bool{}
+	for _, c := range configured {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if c == "~" || strings.HasPrefix(c, "~/") {
+			c = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(c, "~"), "/"))
+		}
+		c = filepath.Clean(c)
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+// repoDirsUnder returns the git checkouts at or under parent, descending at
+// most depth levels. It stops at a repo (what is inside one is that repo, not
+// a sibling) and skips dot-directories.
+func repoDirsUnder(parent string, depth int) []string {
+	var out []string
+	var walk func(dir string, left int)
+	walk = func(dir string, left int) {
+		if isGitRepo(dir) {
+			out = append(out, dir)
+			return
+		}
+		if left <= 0 {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				walk(filepath.Join(dir, e.Name()), left-1)
+			}
+		}
+	}
+	walk(parent, depth)
+	return out
+}
+
 // isGitRepo reports whether dir is the root of a git repo (has a .git entry).
 func isGitRepo(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, ".git"))
@@ -176,17 +233,24 @@ func discoverRepos() []repoInfo {
 		}
 	}
 
-	// one-level scan of common parents
-	for _, parent := range commonRepoParents() {
-		add(parent) // the parent itself may be a repo
-		entries, err := os.ReadDir(parent)
-		if err != nil {
+	// the built-in guesses one level deep, then the folders set in Settings
+	// deeper, since those were named on purpose.
+	builtin := commonRepoParents()
+	for _, parent := range builtin {
+		for _, d := range repoDirsUnder(parent, 1) {
+			add(d)
+		}
+	}
+	known := map[string]bool{}
+	for _, p := range builtin {
+		known[p] = true
+	}
+	for _, parent := range repoScanRoots(loadConfig().RepoRoots) {
+		if known[parent] {
 			continue
 		}
-		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				add(filepath.Join(parent, e.Name()))
-			}
+		for _, d := range repoDirsUnder(parent, configuredRootDepth) {
+			add(d)
 		}
 	}
 

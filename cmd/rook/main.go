@@ -25,7 +25,7 @@ var webFS embed.FS
 const maxToolsPerSession = 40
 
 // appVersion is bumped with each asset change; the client force-reloads on mismatch.
-const appVersion = "113"
+const appVersion = "116"
 
 // version is the released build version, injected at build time via ldflags
 // (-X main.version=...). "dev" for a plain `go build` / source run.
@@ -75,7 +75,7 @@ func main() {
 	app.GET("/operator.html", staticHandler("operator.html", "text/html; charset=utf-8"))
 	app.GET("/operator.css", staticHandler("operator.css", "text/css; charset=utf-8"))
 	app.GET("/operator.js", staticHandler("operator.js", "text/javascript; charset=utf-8"))
-	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications"} {
+	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications", "system"} {
 		name := "operator-" + v + ".js"
 		app.GET("/"+name, staticHandler(name, "text/javascript; charset=utf-8"))
 	}
@@ -113,6 +113,9 @@ func main() {
 	app.POST("/api/reflect", handleReflect)
 	app.POST("/api/devserver/stop", handleStopDevServer)
 	app.GET("/api/logs", handleLogs)
+	app.GET("/api/prboard", handlePRBoard)
+	app.GET("/api/system", handleSystem)
+	app.POST("/api/system/kill", handleSystemKill)
 	app.POST("/api/respond", handleRespond)
 	app.POST("/api/spawn", handleSpawn)
 	app.POST("/api/kill", handleKill)

@@ -179,7 +179,7 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 	// collision fails the new-session after the worktree is already on disk,
 	// orphaning it.
 	if _, err := runTmux("has-session", "-t", req.Name); err == nil {
-		return "", "", http.StatusConflict, fmt.Errorf("an agent named %q is already running", req.Name)
+		return "", "", http.StatusConflict, fmt.Errorf("%s", spawnConflictMsg(req.Name, tmuxNameState(req.Name)))
 	}
 
 	// Isolate in a git worktree so the agent can `gh pr checkout` / branch without

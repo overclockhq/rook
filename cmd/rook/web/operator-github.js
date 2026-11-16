@@ -171,7 +171,7 @@
         '<div class="gh-repo-main">' +
           '<div class="gh-repo-name">' + c.esc(r.name) + (r.isPrivate ? '<span class="gh-tag">private</span>' : "") + (r.isArchived ? '<span class="gh-tag arc">archived</span>' : "") + "</div>" +
           '<div class="gh-repo-desc">' + c.esc(r.description || "—") + "</div>" +
-          '<div class="gh-repo-meta">' + c.esc(lang) + c.esc(stars) + (ts ? ' · <span class="gh-ago" data-ts="' + ts + '">' + c.esc(c.ago(ts, c.now())) + "</span>" : "") + "</div>" +
+          '<div class="gh-repo-meta">' + [lang ? c.esc(lang) : "", stars ? c.esc(stars.replace(/^ · /, "")) : "", ts ? '<span class="gh-ago" data-ts="' + ts + '">' + c.esc(c.ago(ts, c.now())) + "</span>" : ""].filter(Boolean).join(" · ") + "</div>" +
         "</div>" +
         '<button class="btn sm gh-repo-act" data-clone="' + c.esc(r.nameWithOwner) + '">' + c.icon.plus + "Clone</button>" +
       "</div>";

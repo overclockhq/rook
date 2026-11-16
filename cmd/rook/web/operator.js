@@ -18,7 +18,7 @@
   function ago(ms, now) { if (!ms) return "—"; var s = Math.max(0, Math.floor((now - ms) / 1000)); if (s < 60) return s + "s"; var m = Math.floor(s / 60); if (m < 60) return m + "m"; var h = Math.floor(m / 60); if (h < 24) return h + "h"; return Math.floor(h / 24) + "d"; }
   function shortModel(m) { return m ? m.replace(/^claude-/, "").replace(/-\d{8}$/, "") : ""; }
   function statusOf(s) { return s.alive ? (s.status || "idle") : "dead"; }
-  function groupOf(s) { var st = statusOf(s); if (st === "waiting") return "needs"; if (st === "busy" || st === "shell") return "working"; if (st === "dead") return "done"; return "idle"; }
+  function groupOf(s) { var st = statusOf(s); if (st === "waiting") return "needs"; if (st === "busy" || st === "shell" || st === "starting") return "working"; if (st === "dead") return "done"; return "idle"; }
 
   // ---- icons (inline, one stroke set) --------------------------------------
   var I = {
@@ -76,6 +76,8 @@
     return { owner: ow[0], repo: ow[1], kind: kind, number: num };
   }
   function mdLite(s) {
+    if (window.rookMd) return window.rookMd(s || "", esc);
+    // fallback while the summaries module is still loading
     s = esc(s || "");
     s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     s = s.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
@@ -244,7 +246,8 @@
     } else if (activeView === "insights") {
       renderInsights();
     } else if (activeView === "board") {
-      renderBoard();
+      // deliberately nothing: the PR board is driven by GitHub, not by agent
+      // state, and re-rendering it on this 2s poll tore down open drawers
     } else if (extRender) {
       extRender();
     }
@@ -280,7 +283,7 @@
 
   // registry for plug-in views (operator-<name>.js register window.OP_VIEWS[name])
   window.OP_VIEWS = window.OP_VIEWS || {};
-  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", notifications: "Notifications" };
+  var TITLES = { operator: "Operator", insights: "Insights", board: "Pull requests", system: "System health", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", notifications: "Notifications" };
   var extRender = null; // active plug-in view's render() for live refresh on poll
 
   function setView(v) {
@@ -451,7 +454,7 @@
     host.querySelectorAll(".ws-tab").forEach(function (b) { b.addEventListener("click", function () { switchTab(b.dataset.tab); }); });
     $("wsReview") && $("wsReview").addEventListener("click", function () { switchTab("diff"); });
     $("wsPR") && $("wsPR").addEventListener("click", function () { createPR(s); });
-    $("wsLogs") && $("wsLogs").addEventListener("click", function () { window.open("/api/logs?session=" + encodeURIComponent(s.sessionId), "_blank"); });
+    $("wsLogs") && $("wsLogs").addEventListener("click", function () { openLogs(s); });
     $("wsStop") && $("wsStop").addEventListener("click", function () { if (confirm("Stop this agent? This kills its tmux pane.")) killAgent(s); });
     activateTab(ws.tab);
   }
@@ -624,21 +627,27 @@
     }
     var changed = (s.changedFiles || []).length;
     var health = s.health ? (s.health.level === "alert" ? "⚠ " : "") + (s.health.reason || s.health.level) : "healthy";
-    h += '<div class="ov-stats">' +
-      stat("Agent", esc(s.provider || "claude")) +
-      stat("Status", st) +
-      stat("Model", esc(shortModel(s.model) || "—")) +
-      stat("Version", esc(s.version || "—")) +
-      stat("Tokens", fmtTokens(s.tokensTotal) + " total") +
-      stat("Cost (est)", fmtUSD(s.costUsd)) +
-      stat("Quality", qualityHTML(s)) +
-      stat("Last 5h / 7d", fmtTokens(s.tokens5h) + " / " + fmtTokens(s.tokens7d)) +
-      stat("Running for", s.startedAt ? ago(s.startedAt, now()) : "—") +
-      stat("Updated", ago(s.updatedAt, now()) + " ago") +
-      stat("Health", esc(health)) +
-      (s.reflectionAttempts ? stat("Reflexion retries", s.reflectionAttempts + " to green") : "") +
-      stat("Changed files", changed ? String(changed) : "0") +
-      stat("PID", (s.pid || "—") + (s.alive ? "" : " (exited)")) +
+    var cells = [
+      stat("Agent", esc(s.provider || "claude")),
+      stat("Status", st),
+      stat("Model", esc(shortModel(s.model) || "—")),
+      stat("Version", esc(s.version || "—")),
+      stat("Tokens", fmtTokens(s.tokensTotal) + " total"),
+      stat("Cost (est)", fmtUSD(s.costUsd)),
+      stat("Quality", qualityHTML(s)),
+      stat("Last 5h / 7d", fmtTokens(s.tokens5h) + " / " + fmtTokens(s.tokens7d)),
+      stat("Running for", s.startedAt ? ago(s.startedAt, now()) : "—"),
+      stat("Updated", ago(s.updatedAt, now()) + " ago"),
+      stat("Health", esc(health)),
+      stat("Changed files", changed ? String(changed) : "0"),
+      stat("PID", (s.pid || "—") + (s.alive ? "" : " (exited)"))
+    ];
+    if (s.reflectionAttempts) cells.push(stat("Reflexion retries", s.reflectionAttempts + " to green"));
+    // pad the last row: the grid draws its rules with a 1px gap over a line-
+    // coloured background, so a half-filled final row shows as a grey slab.
+    // Padding to a multiple of 4 also satisfies the 2-column breakpoint.
+    while (cells.length % 4 !== 0) cells.push('<div class="ov-stat pad"></div>');
+    h += '<div class="ov-stats">' + cells.join("") +
       '<div class="ov-stat full"><div class="k">cwd</div><div class="v wrap">' + esc(s.cwd || "—") + "</div></div>" +
       "</div>";
     // what the agent has been doing — tool-call mix
@@ -1083,7 +1092,7 @@
     var qWorked = sessions().filter(function (s) { return ((s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length)) && s.qualityScore != null && s.qualityScore >= 0; });
     var qScore = function (s) { return s.qualityScore == null ? 0 : s.qualityScore; };
     var qColor = function (v) { return v >= 85 ? "var(--ok)" : v >= 60 ? "var(--busy)" : "var(--danger)"; };
-    var qLabel = function (s) { return (s.title || s.project || "session").slice(0, 26); };
+    var qLabel = function (s) { var t = s.title || s.project || "session"; return t.length > 26 ? t.slice(0, 25) + "\u2026" : t; };
     var qTop = qWorked.slice().sort(function (a, b) { return (b.costUsd || 0) - (a.costUsd || 0); }).slice(0, 8);
     if ($("insQTiles")) {
       var scores = qWorked.map(qScore);
@@ -1101,26 +1110,21 @@
     }
   }
 
-  // ---- board view ----------------------------------------------------------
+  // ---- board view (pull requests) -------------------------------------------
+  // The board used to mirror the agent roster, which the Operator console already
+  // shows better. It now answers the question the roster cannot: across my repos,
+  // what is blocked on me and what is blocking my work from landing?
   function buildBoardView() {
     var v = el("div", "op-board-view");
-    v.innerHTML = '<div class="op-board-head"><h1>Board</h1><p>Every agent by its live state — click a card to open it, or act right from the card.</p></div><div id="opBoardMount"></div>';
+    v.innerHTML = '<div class="op-board-head"><h1>Pull requests</h1>' +
+      '<p>Everything you raised and everything waiting on your review, across the repos you pin.</p></div>' +
+      '<div id="opBoardMount"></div>';
     return v;
   }
-  var boardChains = [];
-  async function renderBoard() {
+  function renderBoard() {
     var mount = $("opBoardMount"); if (!mount) return;
-    try { boardChains = await (await fetch("/api/chains", { cache: "no-store" })).json(); if (boardChains && boardChains.data) boardChains = boardChains.data; } catch (e) { boardChains = []; }
-    if (!window.renderBoardV2) { mount.innerHTML = '<div class="op-empty">board module not loaded</div>'; return; }
-    window.renderBoardV2(mount, { sessions: sessions(), chains: boardChains || [] }, {
-      onOpen: function (id) { setView("operator"); selectAgent(id); },
-      onDiff: function (id) { setView("operator"); selectAgent(id); switchTab("diff"); },
-      onReview: function (id) { setView("operator"); selectAgent(id); switchTab("diff"); },
-      onTerminal: function (id) { setView("operator"); selectAgent(id); switchTab("terminal"); },
-      onAllow: function (id) { respond(id, "allow", ""); },
-      onDeny: function (id) { respond(id, "deny", ""); },
-      onNewTask: createChain, onMove: function () {}
-    });
+    if (!window.renderPRBoard) { mount.innerHTML = '<div class="op-empty">board module not loaded</div>'; return; }
+    window.renderPRBoard(mount, opCtx());
   }
 
   // ---- settings (real form over /api/config + hooks) -----------------------
@@ -1140,7 +1144,7 @@
     var selectField = function (label, id, val, opts) { return '<label class="set-field"><span class="set-k">' + esc(label) + '</span><select class="set-in" id="set_' + id + '">' + opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === val ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select></label>"; };
     var chip = function (on, name) { return '<span class="pill ' + (on ? "ok" : "idle") + '" style="margin-left:6px">' + esc(name) + "</span>"; };
     host.innerHTML =
-      '<div class="ins-grid" style="grid-template-columns:1fr 1fr">' +
+      '<div class="ins-grid" style="grid-template-columns:1fr 1fr;align-items:start">' +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Automation</div></div>' +
           toggle("Destructive-command gate", "hooksGate", cfg.hooksGate, "block clearly-dangerous commands via the PreToolUse hook") +
           toggle("Auto-review on finish", "autoReview", cfg.autoReview, "spawn a review subagent when a session ends with changes") +
@@ -1149,20 +1153,8 @@
           toggle("Allow write actions", "allowWrite", cfg.allowWrite, "enable PR create/merge to GitHub") +
           field("Max reflect iterations", "maxReflectIterations", cfg.maxReflectIterations || "", "3", "number") +
           field("Review passes (diverse panel)", "reviewPasses", cfg.reviewPasses || "", "1 = single · 2–3 = panel", "number") +
-        "</div>" +
-        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Claude Code hooks</div><div class="ins-card-meta">' + (hooks.installed ? '<span class="pill ok">installed</span>' : '<span class="pill dead">not installed</span>') + "</div></div>" +
-          '<div class="set-hint mono" style="margin-bottom:10px;word-break:break-all">' + esc(hooks.settingsPath || "") + "</div>" +
-          '<div class="ov-sec-label">Recent events (' + (hooks.events || 0) + ")</div>" +
-          '<div style="display:flex;gap:8px;margin-top:10px">' +
-            (hooks.installed ? '<button class="btn sm danger" id="setHookUninstall">Uninstall</button>' : '<button class="btn sm primary" id="setHookInstall">Install hooks</button>') +
-          "</div>" +
-        "</div>" +
-        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Notifications & editor</div><div class="ins-card-meta">' + chip(!!cfg.slackWebhook, "Slack") + chip(!!cfg.discordWebhook, "Discord") + chip(!!cfg.ntfy, "ntfy") + "</div></div>" +
-          field("ntfy topic URL", "ntfy", cfg.ntfy, "https://ntfy.sh/your-topic") +
-          field("Slack webhook", "slackWebhook", cfg.slackWebhook, "https://hooks.slack.com/…") +
-          field("Discord webhook", "discordWebhook", cfg.discordWebhook, "https://discord.com/api/webhooks/…") +
-          selectField("Open worktrees in", "editor", cfg.editor || "code", ["code", "cursor", "idea", "zed", "subl"]) +
-          '<div style="margin-top:8px"><button class="btn sm" id="setNotifTest">' + I.send + "Send test notification</button></div>" +
+          field("Repo folders", "repoRoots", (cfg.repoRoots || []).join(", "), "~/code, ~/work/acme — scanned 3 levels deep") +
+          '<div class="set-hint" id="setRepoCount" style="margin-top:-4px">' + esc(repoList.length + (repoList.length === 1 ? " repo" : " repos") + " found — the launcher fills the working directory from these") + "</div>" +
         "</div>" +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Trackers & summaries</div><div class="ins-card-meta">' + chip(!!cfg.linearToken, "Linear") + chip(!!(cfg.jiraToken && cfg.jiraBase), "Jira") + "</div></div>" +
           field("Linear token", "linearToken", cfg.linearToken, "lin_api_…") +
@@ -1174,18 +1166,35 @@
           field("Summary schedule", "summarySchedule", cfg.summarySchedule, "HH:MM local, empty = off") +
           selectField("Summary model", "summaryModel", cfg.summaryModel || "haiku", ["haiku", "sonnet", "opus"]) +
         "</div>" +
-      "</div>" +
-      '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="btn primary" id="setSave">' + I.check + 'Save settings</button><span id="setSaved" class="mono" style="color:var(--ok);font-size:12px"></span></div>';
+      '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Notifications & editor</div><div class="ins-card-meta">' + chip(!!cfg.slackWebhook, "Slack") + chip(!!cfg.discordWebhook, "Discord") + chip(!!cfg.ntfy, "ntfy") + "</div></div>" +
+          field("ntfy topic URL", "ntfy", cfg.ntfy, "https://ntfy.sh/your-topic") +
+          field("Slack webhook", "slackWebhook", cfg.slackWebhook, "https://hooks.slack.com/…") +
+          field("Discord webhook", "discordWebhook", cfg.discordWebhook, "https://discord.com/api/webhooks/…") +
+          selectField("Open worktrees in", "editor", cfg.editor || "code", ["code", "cursor", "idea", "zed", "subl"]) +
+          '<div style="margin-top:8px"><button class="btn sm" id="setNotifTest">' + I.send + "Send test notification</button></div>" +
+        "</div>" +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Claude Code hooks</div><div class="ins-card-meta">' + (hooks.installed ? '<span class="pill ok">installed</span>' : '<span class="pill dead">not installed</span>') + "</div></div>" +
+          '<div class="set-hint mono" style="margin-bottom:10px;word-break:break-all">' + esc(hooks.settingsPath || "") + "</div>" +
+          '<div class="ov-sec-label">Recent events (' + (hooks.events || 0) + ")</div>" +
+          '<div style="display:flex;gap:8px;margin-top:10px">' +
+            (hooks.installed ? '<button class="btn sm danger" id="setHookUninstall">Uninstall</button>' : '<button class="btn sm primary" id="setHookInstall">Install hooks</button>') +
+          "</div>" +
+        "</div>" +
+        "</div>" +
+      '<div style="margin-top:16px;display:flex;gap:10px;align-items:center;justify-content:flex-end"><span id="setSaved" class="mono" style="color:var(--ok);font-size:12px"></span><button class="btn primary" id="setSave">' + I.check + 'Save settings</button></div>';
     var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, summaryModel: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, autoCompact: 1, maxReflectIterations: 1, reviewPasses: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
     $("setSave").addEventListener("click", async function () {
       var out = {};
+      // a list, not a string: split on commas or newlines so either style works
+      var rr = $("set_repoRoots");
+      if (rr) out.repoRoots = rr.value.split(/[,\n]/).map(function (x) { return x.trim(); }).filter(Boolean);
       Object.keys(cfgKeys).forEach(function (k) {
         var elm = $("set_" + k); if (!elm) { out[k] = cfg[k]; return; }
         if (elm.type === "checkbox") out[k] = elm.checked;
         else if (elm.type === "number") out[k] = parseInt(elm.value, 10) || 0;
         else out[k] = elm.value;
       });
-      try { await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(out) }); $("setSaved").textContent = "saved ✓"; setTimeout(function () { $("setSaved").textContent = ""; }, 2500); toast("Settings saved", "ok"); }
+      try { await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(out) }); $("setSaved").textContent = "saved ✓"; setTimeout(function () { $("setSaved").textContent = ""; }, 2500); toast("Settings saved", "ok"); await fetchRepos(); var rc = $("setRepoCount"); if (rc) rc.textContent = repoList.length + (repoList.length === 1 ? " repo" : " repos") + " found — the launcher fills the working directory from these"; }
       catch (e) { toast("Save failed", "err"); }
     });
     $("setNotifTest") && $("setNotifTest").addEventListener("click", async function () {
@@ -1221,11 +1230,76 @@
   }
 
   // ---- modal + launch/chain -----------------------------------------------
+  // ---- session log viewer --------------------------------------------------
+  // /api/logs serves the raw JSONL transcript. Opening that in a tab is a wall
+  // of escaped JSON, so parse it here and show the turns.
+  function logBlocks(msg) {
+    var c = msg && msg.content;
+    if (typeof c === "string") return [{ kind: "text", text: c }];
+    if (!Array.isArray(c)) return [];
+    return c.map(function (b) {
+      if (!b || typeof b !== "object") return null;
+      if (b.type === "text") return { kind: "text", text: b.text || "" };
+      if (b.type === "thinking") return { kind: "think", text: b.thinking || "" };
+      if (b.type === "tool_use") {
+        var inp = b.input || {};
+        var d = inp.command || inp.description || inp.file_path || inp.pattern || inp.prompt || "";
+        return { kind: "tool", text: b.name + (d ? " · " + String(d) : "") };
+      }
+      if (b.type === "tool_result") {
+        var r = b.content;
+        if (Array.isArray(r)) r = r.map(function (x) { return x && x.text ? x.text : ""; }).join(" ");
+        return { kind: "result", text: String(r == null ? "" : r) };
+      }
+      return null;
+    }).filter(Boolean);
+  }
+
+  function openLogs(s) {
+    var raw = "/api/logs?session=" + encodeURIComponent(s.sessionId);
+    modal("Session log · " + (s.title || s.project || s.sessionId),
+      '<div class="lg-bar"><span class="lg-note" id="lgNote">Loading…</span><a class="btn sm" href="' + raw + '" target="_blank" rel="noopener">Open raw</a></div>' +
+      '<div class="lg-body" id="lgBody"></div>',
+      function (ov) {
+        ov.classList.add("lg-wide");
+        fetch(raw).then(function (r) { return r.text(); }).then(function (txt) {
+          var rows = [], lines = txt.split("\n");
+          for (var i = 0; i < lines.length; i++) {
+            if (!lines[i]) continue;
+            var d; try { d = JSON.parse(lines[i]); } catch (e) { continue; }
+            if (d.type !== "user" && d.type !== "assistant") continue;
+            var blocks = logBlocks(d.message);
+            if (!blocks.length) continue;
+            rows.push({ role: d.type, ts: d.timestamp, blocks: blocks });
+          }
+          var shown = rows.slice(-200);
+          $("lgNote").textContent = shown.length
+            ? shown.length + " of " + rows.length + " turns"
+            : "No turns recorded yet";
+          $("lgBody").innerHTML = shown.map(function (r) {
+            var t = r.ts ? new Date(r.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+            return '<div class="lg-row lg-' + r.role + '">' +
+              '<div class="lg-meta"><span class="lg-t">' + esc(t) + '</span>' +
+              '<span class="lg-role">' + (r.role === "user" ? "you" : "agent") + "</span></div>" +
+              '<div class="lg-blocks">' + r.blocks.map(function (b) {
+                return '<div class="lg-b lg-' + b.kind + '">' + esc(b.text.length > 1600 ? b.text.slice(0, 1600) + "\u2026" : b.text) + "</div>";
+              }).join("") + "</div></div>";
+          }).join("");
+          var body = $("lgBody"); if (body) body.scrollTop = body.scrollHeight;
+        }).catch(function () {
+          if ($("lgNote")) $("lgNote").textContent = "Could not load the transcript";
+        });
+      });
+  }
+
   function modal(title, bodyHTML, onMount) {
     var ov = el("div", "op-modal-ov");
     ov.innerHTML = '<div class="op-modal"><div class="op-modal-head"><b>' + esc(title) + '</b><button class="op-modal-x">' + I.x + '</button></div><div class="op-modal-body">' + bodyHTML + "</div></div>";
     document.body.appendChild(ov);
-    var close = function () { ov.remove(); };
+    var close = function () { document.removeEventListener("keydown", onKey, true); ov.remove(); };
+    // capture phase: a focused input inside the modal would otherwise swallow Escape
+    var onKey = function (e) { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+    document.addEventListener("keydown", onKey, true);
     ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
     ov.querySelector(".op-modal-x").addEventListener("click", close);
     onMount && onMount(ov, close);
@@ -1241,7 +1315,7 @@
       '<label class="set-field"><span class="set-k">Initial prompt (optional)</span><textarea class="set-in" id="sp_prompt" rows="' + (prefill.prompt ? 6 : 4) + '" placeholder="what should the agent do?">' + esc(prefill.prompt || "") + '</textarea></label>' +
       '<label class="set-toggle"><input type="checkbox" id="sp_wt" ' + (prefill.worktree ? "checked" : "") + ' /><span><b>Isolate in a git worktree</b><span class="set-hint">don\'t touch your working checkout</span></span></label>' +
       '<div id="sp_docs_wrap" style="display:none"><label class="set-toggle"><input type="checkbox" id="sp_docs" checked /><span><b>Follow this repo\'s agent instructions</b><span class="set-hint" id="sp_docs_list"></span></span></label></div>' +
-      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="sp_go">' + I.plus + "Launch</button></div>",
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" id="sp_cancel">Cancel</button><button class="btn primary" id="sp_go">' + I.plus + "Launch</button></div>",
       function (ov, close) {
         if (prefill.cwd) $("sp_prompt").focus(); else $("sp_cwd").focus();
         // model routing is Claude-only; hide it for other agents (server rejects it too)
@@ -1251,6 +1325,7 @@
           if (!claude) $("sp_model").value = "default";
         }
         $("sp_agent").addEventListener("change", syncAgent);
+        if ($("sp_cancel")) $("sp_cancel").addEventListener("click", close);
         syncAgent();
         // detect a repo's AGENTS.md/CLAUDE.md etc. so the agent can be told to follow them
         var docFiles = [];
@@ -1451,7 +1526,8 @@
       { g: "Go", title: "Task graphs", sub: "DAG orchestration", key: "G T", run: function () { setView("graph"); } },
       { g: "Go", title: "Operator", sub: "workspace console", key: "G O", run: function () { setView("operator"); } },
       { g: "Go", title: "Insights", sub: "usage · cost · trends", key: "G I", run: function () { setView("insights"); } },
-      { g: "Go", title: "Board", sub: "kanban by state", key: "G B", run: function () { setView("board"); } },
+      { g: "Go", title: "Pull requests", sub: "my PRs · awaiting my review", key: "G B", run: function () { setView("board"); } },
+      { g: "Go", title: "System health", sub: "cpu · memory · what is slowing this Mac", key: "G Y", run: function () { setView("system"); } },
       { g: "Go", title: "GitHub", sub: "repos · issues · PRs", run: function () { setView("github"); } },
       { g: "Go", title: "Summaries", sub: "saved work summaries", run: function () { setView("summaries"); } },
       { g: "Go", title: "Dev servers", sub: "running dev servers", run: function () { setView("dev"); } },
@@ -1553,8 +1629,8 @@
     if (rows[i]) { selectAgent(rows[i]); var b = document.querySelector('.op-agent[data-id="' + rows[i] + '"]'); b && b.scrollIntoView({ block: "nearest" }); }
   }
   // g-prefix jump targets (g o, g i, …) — one per view.
-  var GO_KEYS = { o: "operator", i: "insights", b: "board", t: "graph", h: "github", s: "summaries", d: "dev", a: "audit", w: "workspace", ",": "settings" };
-  var VIEW_LABELS = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", settings: "Settings" };
+  var GO_KEYS = { o: "operator", i: "insights", b: "board", y: "system", t: "graph", h: "github", s: "summaries", d: "dev", a: "audit", w: "workspace", ",": "settings" };
+  var VIEW_LABELS = { operator: "Operator", insights: "Insights", board: "Pull requests", system: "System health", graph: "Task graphs", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", settings: "Settings" };
   function showShortcuts() {
     // g-nav rows are generated from the keymap so the help can't drift from it
     var goRows = Object.keys(GO_KEYS).map(function (k) { return ["g " + k, "go to " + (VIEW_LABELS[GO_KEYS[k]] || GO_KEYS[k])]; });
@@ -1584,6 +1660,9 @@
     var btn = $("opTheme"); if (btn) btn.setAttribute("data-tip", t === "light" ? "Switch to dark" : "Switch to light");
   }
   function boot() {
+    document.querySelectorAll(".op-rail-btn").forEach(function (b) {
+      if (b.dataset.tip && !b.getAttribute("aria-label")) b.setAttribute("aria-label", b.dataset.tip);
+    });
     document.querySelectorAll(".op-rail-btn[data-view]").forEach(function (b) { b.addEventListener("click", function () { setView(b.dataset.view); }); });
     applyTheme(currentTheme());
     $("opTheme") && $("opTheme").addEventListener("click", function () { applyTheme(currentTheme() === "light" ? "dark" : "light"); });

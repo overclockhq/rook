@@ -136,6 +136,33 @@
     if (inCode) html += "</code></pre>";
     return html;
   }
+  // shared: the PR/issue panes need the same renderer, and a second partial
+  // implementation is how "##" ends up printed literally in one view and not
+  // the other.
+  window.rookMd = function (md, esc) { return mdToHtml(md, esc || function (v) { return String(v == null ? "" : v); }); };
+
+  // strip markdown syntax for the two-line list preview — the preview is prose,
+  // not a rendered document, so "#", "**" and "`" are noise there
+  function mdPlain(s) {
+    return String(s == null ? "" : s)
+      .replace(/```[\s\S]*?```/g, " ")
+      // the server flattens the snippet to a single line, so markers appear
+      // mid-string ("… 2026-09-18 ## Detailed ### …") and a line-anchored
+      // strip would only catch the first one
+      .replace(/(^|\s)#{1,6}\s+/g, "$1")
+      .replace(/(^|\s)[-*+]\s+/g, "$1")
+      .replace(/(^|\s)\d+\.\s+/g, "$1")
+      .replace(/(^|\s)>\s?/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      // the snippet is cut to a fixed length upstream, so it can end mid-token
+      // and leave an unpaired "**" or backtick behind
+      .replace(/\*\*/g, "")
+      .replace(/`/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
   // ---- helpers -------------------------------------------------------------
   function rangeLabel(s, esc) {
@@ -164,12 +191,19 @@
     var st = document.createElement("style");
     st.id = "op-summaries-css";
     st.textContent =
-      ".op-sum { padding: 0; }" +
-      ".op-sum-grid { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 16px; padding: 20px 24px 40px; align-items: start; }" +
+      // The view host hands its child a bounded height (.op-view > * is flex:1,
+      // min-height:0). Summaries never claimed it, so the whole page scrolled as
+      // one — which is why dragging on the reading pane moved the list beside it.
+      ".op-sum { padding: 0; display: flex; flex-direction: column; overflow: hidden; }" +
+      ".op-sum-grid { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 16px; padding: 20px 24px; flex: 1; min-height: 0; align-items: stretch; }" +
       "@media (max-width: 820px) { .op-sum-grid { grid-template-columns: 1fr; } }" +
-      ".op-sum-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; }" +
+      ".op-sum-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }" +
+      // Each pane owns its scroll, and overscroll-behavior stops a pane that has
+      // hit its end from handing the remaining scroll to its neighbour.
+      ".op-sum-list { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1; padding-bottom: 8px; }" +
       ".op-sum-bar { display: flex; align-items: center; gap: 8px; }" +
-      ".op-sum-search { flex: 1; display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink-2); }" +
+      ".op-sum-bar .btn { flex: none; }" +
+      ".op-sum-search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink-2); }" +
       ".op-sum-search svg { width: 15px; height: 15px; color: var(--ink-4); flex: none; }" +
       ".op-sum-search input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--ink); font-size: 12.5px; font-family: var(--sans); }" +
       ".op-sum-search input::placeholder { color: var(--ink-4); }" +
@@ -193,7 +227,6 @@
       ".op-sum-modal-actions .btn.gen:disabled { opacity: .6; cursor: default; }" +
       ".op-sum-bulk { display: flex; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid var(--coral-line); background: var(--coral-soft); border-radius: var(--radius); }" +
       ".op-sum-bulk .n { font-size: 12px; color: var(--ink); font-weight: 500; margin-right: auto; }" +
-      ".op-sum-list { display: flex; flex-direction: column; }" +
       ".op-sum .sum-row { grid-template-columns: auto 1fr; align-items: start; gap: 11px; cursor: pointer; padding: 11px 4px; }" +
       ".op-sum .sum-row:hover { background: var(--surface-2); }" +
       ".op-sum .sum-row.sel { background: var(--surface-3); }" +
@@ -203,7 +236,9 @@
       ".op-sum .sum-title { font-size: 13px; color: var(--ink); font-weight: 500; }" +
       ".op-sum .sum-meta { font-size: 11px; color: var(--ink-3); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }" +
       ".op-sum .sum-snip { font-size: 12px; color: var(--ink-3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }" +
-      ".op-sum-right { position: sticky; top: 20px; min-width: 0; }" +
+      ".op-sum-right { min-width: 0; min-height: 0; display: flex; flex-direction: column; }" +
+      ".op-sum-read { flex: 1; min-height: 0; display: flex; flex-direction: column; }" +
+      ".op-sum-read .sum-read-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1; padding-bottom: 8px; }" +
       ".op-sum-read .sum-read-actions { display: flex; gap: 7px; }" +
       ".op-sum-read .sum-read-body { color: var(--ink-2); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }" +
       ".op-sum-read .sum-read-body .sum-h { color: var(--ink); margin: 16px 0 8px; line-height: 1.3; }" +
@@ -374,7 +409,7 @@
         "<div class='rt'>" +
           "<div class='sum-title mono'>" + rangeLabel(s, esc) + "</div>" +
           "<div class='sum-meta'>" + metaLine(s, ctx) + "</div>" +
-          (s.snippet ? "<div class='sum-snip'>" + esc(s.snippet) + "</div>" : "") +
+          (s.snippet ? "<div class='sum-snip'>" + esc(mdPlain(s.snippet)) + "</div>" : "") +
         "</div></div>";
     }).join("");
 

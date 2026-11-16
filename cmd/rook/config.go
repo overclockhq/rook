@@ -11,18 +11,18 @@ import (
 // Config holds user settings persisted to ~/.rook/config.json so they
 // survive restarts and can be set from the UI Settings page.
 type Config struct {
-	Ntfy            string `json:"ntfy"`            // ntfy topic URL for phone push (optional)
-	SummaryAuthor   string `json:"summaryAuthor"`   // default GitHub author for daily summaries
-	SummaryRepos    string `json:"summaryRepos"`    // default repos (comma-separated)
-	SummaryCwd      string `json:"summaryCwd"`      // working dir the summary agent runs in
-	SummarySchedule string `json:"summarySchedule"` // "HH:MM" local time for auto-run; empty = off
-	SummaryModel    string `json:"summaryModel"`    // model for the (low-stakes) summary agent; empty = cheap default (haiku)
-	HooksGate       bool   `json:"hooksGate"`       // PreToolUse gate: block clearly-destructive commands
-	AutoReview      bool   `json:"autoReview"`      // spawn a review subagent when a session finishes with changes
-	AutoVerify      bool   `json:"autoVerify"`      // run the project's build/test command when a session finishes
-	AutoCompact     bool   `json:"autoCompact"`     // tell an agent to /compact when its context nears the limit
-	MaxReflectIterations int `json:"maxReflectIterations"` // Reflexion retry cap on AutoVerify failure; 0 = default (3)
-	ReviewPasses         int `json:"reviewPasses"`         // review agents per review (1 = single; >1 = diverse panel, higher accuracy, more cost)
+	Ntfy                 string `json:"ntfy"`                 // ntfy topic URL for phone push (optional)
+	SummaryAuthor        string `json:"summaryAuthor"`        // default GitHub author for daily summaries
+	SummaryRepos         string `json:"summaryRepos"`         // default repos (comma-separated)
+	SummaryCwd           string `json:"summaryCwd"`           // working dir the summary agent runs in
+	SummarySchedule      string `json:"summarySchedule"`      // "HH:MM" local time for auto-run; empty = off
+	SummaryModel         string `json:"summaryModel"`         // model for the (low-stakes) summary agent; empty = cheap default (haiku)
+	HooksGate            bool   `json:"hooksGate"`            // PreToolUse gate: block clearly-destructive commands
+	AutoReview           bool   `json:"autoReview"`           // spawn a review subagent when a session finishes with changes
+	AutoVerify           bool   `json:"autoVerify"`           // run the project's build/test command when a session finishes
+	AutoCompact          bool   `json:"autoCompact"`          // tell an agent to /compact when its context nears the limit
+	MaxReflectIterations int    `json:"maxReflectIterations"` // Reflexion retry cap on AutoVerify failure; 0 = default (3)
+	ReviewPasses         int    `json:"reviewPasses"`         // review agents per review (1 = single; >1 = diverse panel, higher accuracy, more cost)
 	// integration hub (phase 4) — all opt-in, empty = disabled
 	AllowWrite     bool   `json:"allowWrite"`     // enable PR create/merge write-actions to GitHub
 	SlackWebhook   string `json:"slackWebhook"`   // Slack incoming-webhook URL for notifications
@@ -32,6 +32,13 @@ type Config struct {
 	JiraBase       string `json:"jiraBase"`       // e.g. https://acme.atlassian.net
 	JiraEmail      string `json:"jiraEmail"`
 	JiraToken      string `json:"jiraToken"`
+	// PR board scope — the org and repos you pinned, so the board opens on
+	// your work instead of asking again every session.
+	BoardOrg   string   `json:"boardOrg"`
+	BoardRepos []string `json:"boardRepos"`
+	// Folders to scan for git checkouts, on top of the built-in guesses, so the
+	// launcher resolves a working directory instead of asking for one.
+	RepoRoots []string `json:"repoRoots"`
 }
 
 func configPath() string {
