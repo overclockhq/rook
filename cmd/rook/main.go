@@ -75,7 +75,7 @@ func main() {
 	app.GET("/operator.html", staticHandler("operator.html", "text/html; charset=utf-8"))
 	app.GET("/operator.css", staticHandler("operator.css", "text/css; charset=utf-8"))
 	app.GET("/operator.js", staticHandler("operator.js", "text/javascript; charset=utf-8"))
-	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications"} {
+	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications", "loops"} {
 		name := "operator-" + v + ".js"
 		app.GET("/"+name, staticHandler(name, "text/javascript; charset=utf-8"))
 	}
@@ -171,6 +171,10 @@ func main() {
 	app.GET("/api/github/prs", handleGHPRs)
 	app.GET("/api/github/pr", handleGHPRDetail)
 	app.GET("/api/github/issue", handleGHIssueDetail)
+	app.GET("/api/loops", handleLoops)
+	app.GET("/api/loops/log", handleLoopLog)
+	app.POST("/api/loops/start", handleLoopStart)
+	app.POST("/api/loops/stop", handleLoopStop)
 
 	url := "http://127.0.0.1:" + port + "/"
 	log.Printf("rook %s — open %s", version, url)
