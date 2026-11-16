@@ -61,13 +61,29 @@ func loadConfig() Config {
 	return c
 }
 
+// saveConfig writes c over the existing file, keeping keys this build doesn't
+// know (other rook builds or hand edits add fields), and keeps the file
+// owner-only because it holds tracker tokens and webhook URLs.
 func saveConfig(c Config) error {
 	p := configPath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	raw, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(p, raw, 0o644)
+	merged := map[string]json.RawMessage{}
+	if old, err := os.ReadFile(p); err == nil {
+		_ = json.Unmarshal(old, &merged) // unreadable old file: start fresh
+	}
+	known, _ := json.Marshal(c) // a plain struct of strings, bools and ints always encodes
+	fields := map[string]json.RawMessage{}
+	_ = json.Unmarshal(known, &fields)
+	for k, v := range fields {
+		merged[k] = v
+	}
+	raw, _ := json.MarshalIndent(merged, "", "  ")
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(p, 0o600) // WriteFile keeps the mode of an existing file
 }
 
 func handleConfigGet(ctx *gofr.Context) (any, error) {

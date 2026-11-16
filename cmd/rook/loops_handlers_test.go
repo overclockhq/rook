@@ -88,7 +88,7 @@ func loopCtx(method, target, body string) *gofr.Context {
 	return &gofr.Context{Context: r.Context(), Request: gofrHTTP.NewRequest(r)}
 }
 
-func statusOfErr(t *testing.T, err error) int {
+func loopStatusOfErr(t *testing.T, err error) int {
 	t.Helper()
 	var he *httpErr
 	require.True(t, errors.As(err, &he), "want an httpErr, got %v", err)
@@ -160,7 +160,7 @@ func TestHandleLoopStart(t *testing.T) {
 			out, err := handleLoopStart(loopCtx(http.MethodPost, "/api/loops/start", strings.ReplaceAll(tc.body, "REPO", e.repo)))
 			if tc.wantCode != 0 {
 				require.Error(t, err)
-				assert.Equal(t, tc.wantCode, statusOfErr(t, err))
+				assert.Equal(t, tc.wantCode, loopStatusOfErr(t, err))
 				if tc.wantMsg != "" {
 					assert.Contains(t, err.Error(), tc.wantMsg)
 				}
@@ -210,7 +210,7 @@ func TestHandleLoopStop(t *testing.T) {
 			out, err := handleLoopStop(loopCtx(http.MethodPost, "/api/loops/stop", strings.ReplaceAll(tc.body, "REPO", e.repo)))
 			if tc.wantCode != 0 {
 				require.Error(t, err)
-				assert.Equal(t, tc.wantCode, statusOfErr(t, err))
+				assert.Equal(t, tc.wantCode, loopStatusOfErr(t, err))
 				return
 			}
 			require.NoError(t, err)
@@ -252,7 +252,7 @@ func TestHandleLoopLog(t *testing.T) {
 			out, err := handleLoopLog(loopCtx(http.MethodGet, "/api/loops/log?repo="+e.repo+"&"+tc.query, ""))
 			if tc.wantCode != 0 {
 				require.Error(t, err)
-				assert.Equal(t, tc.wantCode, statusOfErr(t, err))
+				assert.Equal(t, tc.wantCode, loopStatusOfErr(t, err))
 				return
 			}
 			require.NoError(t, err)

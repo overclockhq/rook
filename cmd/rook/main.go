@@ -25,7 +25,7 @@ var webFS embed.FS
 const maxToolsPerSession = 40
 
 // appVersion is bumped with each asset change; the client force-reloads on mismatch.
-const appVersion = "113"
+const appVersion = "114"
 
 // version is the released build version, injected at build time via ldflags
 // (-X main.version=...). "dev" for a plain `go build` / source run.
