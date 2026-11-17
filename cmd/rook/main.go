@@ -25,7 +25,7 @@ var webFS embed.FS
 const maxToolsPerSession = 40
 
 // appVersion is bumped with each asset change; the client force-reloads on mismatch.
-const appVersion = "117"
+const appVersion = "119"
 
 // version is the released build version, injected at build time via ldflags
 // (-X main.version=...). "dev" for a plain `go build` / source run.
@@ -106,6 +106,7 @@ func main() {
 	app.GET("/vendor/fonts/GeistMono-Regular.woff2", staticHandler("vendor/fonts/GeistMono-Regular.woff2", "font/woff2"))
 	app.GET("/vendor/fonts/GeistMono-Medium.woff2", staticHandler("vendor/fonts/GeistMono-Medium.woff2", "font/woff2"))
 	app.GET("/board.js", staticHandler("board.js", "text/javascript; charset=utf-8"))
+	app.GET("/guide.js", staticHandler("guide.js", "text/javascript; charset=utf-8"))
 	app.GET("/board.css", staticHandler("board.css", "text/css; charset=utf-8"))
 	app.GET("/charts.js", staticHandler("charts.js", "text/javascript; charset=utf-8"))
 	app.GET("/charts.css", staticHandler("charts.css", "text/css; charset=utf-8"))

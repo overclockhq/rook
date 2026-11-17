@@ -1638,6 +1638,7 @@
     var rows = [
       ["⌘K", "command palette — search agents, jump, run a command"],
       ["?", "this shortcuts help"],
+      [".", "guide to the current page"],
       ["/", "focus the agent filter"],
       ["j / k", "move down / up the roster"],
       ["↑ / ↓", "move down / up the roster"],
