@@ -893,8 +893,20 @@ func TestAddColumnIfMissing(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT focus FROM review_runs`).Scan(&f))
 	assert.Equal(t, "", f)
 
+	assert.Error(t, addColumnIfMissing(d, "no_such_table", "x", "TEXT"), "ALTER on a missing table fails")
 	_ = d.Close()
-	assert.Error(t, addColumnIfMissing(d, "review_runs", "x", "TEXT"))
+	assert.Error(t, addColumnIfMissing(d, "review_runs", "x", "TEXT"), "query on a closed db fails")
+}
+
+// pins that migrate reports a failed focus-column upgrade instead of starting with a table the inserts can't use
+func TestMigrateReviewRunsColumnUpgradeFails(t *testing.T) {
+	d, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	d.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = d.Close() })
+	_, err = d.Exec(`CREATE VIEW review_runs AS SELECT 1 AS id`)
+	require.NoError(t, err)
+	assert.Error(t, migrateReviewRuns(d))
 }
 
 func TestValidateReviewReq_FocusTooLong(t *testing.T) {

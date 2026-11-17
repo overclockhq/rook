@@ -283,24 +283,14 @@ const maxFocusRunes = 2000
 // addColumnIfMissing adds a column to an existing table, so databases created
 // before the column existed keep working. Additive only.
 func addColumnIfMissing(d *sql.DB, table, col, decl string) error {
-	rows, err := d.Query(`SELECT name FROM pragma_table_info(?)`, table)
-	if err != nil {
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, col).Scan(&n); err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return err
-		}
-		if name == col {
-			return nil
-		}
+	if n > 0 {
+		return nil
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	_, err = d.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + col + ` ` + decl)
+	_, err := d.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + col + ` ` + decl)
 	return err
 }
 
