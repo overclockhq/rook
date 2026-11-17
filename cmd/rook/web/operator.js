@@ -258,7 +258,7 @@
   // shared helpers handed to plug-in views (operator-*.js) so they render with
   // the exact same formatting + toasts and never invent their own.
   function opCtx() {
-    return { el: el, esc: esc, fmtTokens: fmtTokens, fmtUSD: fmtUSD, ago: ago, shortModel: shortModel, statusOf: statusOf, icon: I, now: now, toast: toast, charts: window.rookCharts, selectAgent: function (id) { setView("operator"); selectAgent(id); }, launch: function (prefill) { newAgent(prefill); }, launchGraph: function () { newGraph(); }, resolveRepo: resolveRepoPath, rememberRepo: rememberRepoPath, getRepos: function () { return repoList; } };
+    return { el: el, esc: esc, fmtTokens: fmtTokens, fmtUSD: fmtUSD, ago: ago, shortModel: shortModel, statusOf: statusOf, icon: I, now: now, toast: toast, charts: window.rookCharts, selectAgent: function (id) { setView("operator"); selectAgent(id); }, launch: function (prefill) { newAgent(prefill); }, launchGraph: function () { newGraph(); }, resolveRepo: resolveRepoPath, rememberRepo: rememberRepoPath, getRepos: function () { return repoList; }, openView: openView, takeViewArgs: takeViewArgs };
   }
 
   function pickDefault() {
@@ -287,6 +287,10 @@
   var TITLES = { operator: "Operator", insights: "Insights", board: "Pull requests", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", notifications: "Notifications", loops: "Loops", kit: "Agents & skills", reviews: "Reviews", guardrails: "Guardrails", system: "System health" };
   var extRender = null; // active plug-in view's render() for live refresh on poll
 
+  // One view can open another with arguments (GitHub "Team review" -> Reviews with the PR picked).
+  var viewArgs = {};
+  function openView(v, args) { viewArgs[v] = args; setView(v); }
+  function takeViewArgs(v) { var a = viewArgs[v] || null; delete viewArgs[v]; return a; }
   function setView(v) {
     activeView = v; localStorage.setItem("opView", v);
     document.querySelectorAll(".op-rail-btn[data-view]").forEach(function (b) { b.classList.toggle("active", b.dataset.view === v); });

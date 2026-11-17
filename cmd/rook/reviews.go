@@ -21,6 +21,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"gofr.dev/pkg/gofr"
 )
@@ -96,6 +97,7 @@ const reviewRunsSchema = `CREATE TABLE IF NOT EXISTS review_runs (
 	raw_review      TEXT NOT NULL DEFAULT '',
 	raw_verify      TEXT NOT NULL DEFAULT '',
 	session_id      TEXT NOT NULL DEFAULT '',
+	focus           TEXT NOT NULL DEFAULT '',
 	created_at      INTEGER NOT NULL,
 	started_at      INTEGER NOT NULL DEFAULT 0,
 	finished_at     INTEGER NOT NULL DEFAULT 0
@@ -109,6 +111,9 @@ func migrateReviewRuns(d *sql.DB) error {
 		return nil // store disabled; handlers report it
 	}
 	if _, err := d.Exec(reviewRunsSchema); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(d, "review_runs", "focus", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	_, err := d.Exec(`UPDATE review_runs SET status = ?, error = 'interrupted: rook restarted', finished_at = ?
@@ -174,6 +179,7 @@ type reviewRun struct {
 	PR            int             `json:"pr"`
 	Path          string          `json:"path"`
 	Base          string          `json:"base"`
+	Focus         string          `json:"focus"`
 	Status        string          `json:"status"`
 	Error         string          `json:"error"`
 	Verdict       string          `json:"verdict"`
@@ -264,10 +270,53 @@ func (b boundRequest) Bind(into any) error {
 // ---- request validation + run creation ----
 
 type reviewStartReq struct {
-	Repo string `json:"repo"` // owner/name (PR mode)
-	PR   int    `json:"pr"`
-	Path string `json:"path"` // local checkout; optional in PR mode
-	Base string `json:"base"` // base branch (local mode)
+	Repo  string `json:"repo"` // owner/name (PR mode)
+	PR    int    `json:"pr"`
+	Path  string `json:"path"`  // local checkout; optional in PR mode
+	Base  string `json:"base"`  // base branch (local mode)
+	Focus string `json:"focus"` // optional extra instructions from the user
+}
+
+// maxFocusRunes bounds the user's extra instructions; they go into the agent prompt verbatim.
+const maxFocusRunes = 2000
+
+// addColumnIfMissing adds a column to an existing table, so databases created
+// before the column existed keep working. Additive only.
+func addColumnIfMissing(d *sql.DB, table, col, decl string) error {
+	rows, err := d.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		if name == col {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = d.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + col + ` ` + decl)
+	return err
+}
+
+// cleanFocus trims the user's extra instructions, drops control characters other
+// than newline and tab, and caps the length.
+func cleanFocus(s string) (string, error) {
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || r >= 0x20 && r != 0x7f {
+			return r
+		}
+		return -1
+	}, strings.TrimSpace(s))
+	if utf8.RuneCountInString(s) > maxFocusRunes {
+		return "", errf(http.StatusBadRequest, "focus is too long (max %d characters)", maxFocusRunes)
+	}
+	return s, nil
 }
 
 // baseRefRe keeps the base branch a plain ref name: it reaches git's command
@@ -290,6 +339,11 @@ var resolveCheckout = func(repo string) string {
 // 4xx error. It never runs an agent.
 func validateReviewReq(req reviewStartReq) (reviewRun, error) {
 	run := reviewRun{Status: rsQueued}
+	focus, err := cleanFocus(req.Focus)
+	if err != nil {
+		return run, err
+	}
+	run.Focus = focus
 	req.Repo = strings.TrimSpace(req.Repo)
 	req.Path = strings.TrimSpace(req.Path)
 	req.Base = strings.TrimSpace(req.Base)
@@ -336,8 +390,8 @@ func validateReviewReq(req reviewStartReq) (reviewRun, error) {
 }
 
 func insertReviewRun(r reviewRun) (int64, error) {
-	res, err := db.Exec(`INSERT INTO review_runs (kind, repo, pr, path, base, status, created_at) VALUES (?,?,?,?,?,?,?)`,
-		r.Kind, r.Repo, r.PR, r.Path, r.Base, r.Status, time.Now().UnixMilli())
+	res, err := db.Exec(`INSERT INTO review_runs (kind, repo, pr, path, base, focus, status, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		r.Kind, r.Repo, r.PR, r.Path, r.Base, r.Focus, r.Status, time.Now().UnixMilli())
 	if err != nil {
 		return 0, err
 	}
@@ -346,13 +400,13 @@ func insertReviewRun(r reviewRun) (int64, error) {
 
 // ---- persistence helpers ----
 
-const reviewCols = `id, kind, repo, pr, path, base, status, error, verdict, intent, blast_radius, findings, questions,
+const reviewCols = `id, kind, repo, pr, path, base, focus, status, error, verdict, intent, blast_radius, findings, questions,
 	diff_files, diff_add, diff_del, cost_usd, turns, verify_cost_usd, verify_turns, verify_error, created_at, started_at, finished_at`
 
 func scanReviewRun(sc interface{ Scan(...any) error }, extra ...any) (reviewRun, error) {
 	var r reviewRun
 	var blast, findings, questions string
-	dest := []any{&r.ID, &r.Kind, &r.Repo, &r.PR, &r.Path, &r.Base, &r.Status, &r.Error, &r.Verdict, &r.Intent,
+	dest := []any{&r.ID, &r.Kind, &r.Repo, &r.PR, &r.Path, &r.Base, &r.Focus, &r.Status, &r.Error, &r.Verdict, &r.Intent,
 		&blast, &findings, &questions, &r.DiffFiles, &r.DiffAdd, &r.DiffDel, &r.CostUSD, &r.Turns,
 		&r.VerifyCostUSD, &r.VerifyTurns, &r.VerifyError, &r.CreatedAt, &r.StartedAt, &r.FinishedAt}
 	if err := sc.Scan(append(dest, extra...)...); err != nil {
@@ -623,12 +677,15 @@ func techLeadPrompt(r reviewRun) string {
 			"`git diff %s...HEAD` (committed since the fork point) plus `git diff`, `git diff --staged` and the untracked "+
 			"files in `git status` (uncommitted work).", r.Base, r.Base)
 	}
-	return strings.Join([]string{
-		how,
+	parts := []string{how}
+	if r.Focus != "" {
+		parts = append(parts, "The user asked for this emphasis. Give it priority, but still report any blocker you find elsewhere in the change:\n<user-focus>\n"+r.Focus+"\n</user-focus>")
+	}
+	return strings.Join(append(parts,
 		"Follow your tech-lead review procedure. Report only defects these changes introduce, each with file:line, a concrete failure scenario and evidence.",
 		"Do not modify files, commit, push, or post anything to GitHub.",
 		"Your final message must be ONLY the tech-lead JSON object (verdict, intent, blast_radius, findings, questions, adr) — no human summary, no prose before or after it.",
-	}, "\n\n")
+	), "\n\n")
 }
 
 // verifierPrompt hands the blocker/major findings to the finding-verifier.

@@ -835,3 +835,69 @@ func TestStopReviewsOnSignal(t *testing.T) {
 		t.Fatal("review agent still running after rook received SIGTERM")
 	}
 }
+
+// pins that the user's focus reaches the tech-lead prompt and survives a store round trip
+func TestReviewFocus(t *testing.T) {
+	r := reviewRun{Kind: "pr", PR: 5, Repo: "a/b", Focus: "check the auth handler"}
+	p := techLeadPrompt(r)
+	assert.Contains(t, p, "<user-focus>\ncheck the auth handler\n</user-focus>")
+	assert.Less(t, strings.Index(p, "user-focus"), strings.Index(p, "Your final message"), "focus comes before the output contract")
+	assert.NotContains(t, techLeadPrompt(reviewRun{Kind: "pr", PR: 5, Repo: "a/b"}), "user-focus")
+
+	withReviewDB(t)
+	id, err := insertReviewRun(reviewRun{Kind: "local", Path: "/x", Base: "main", Focus: "tests only", Status: rsQueued})
+	require.NoError(t, err)
+	got, err := getReviewRun(id)
+	require.NoError(t, err)
+	assert.Equal(t, "tests only", got.Focus)
+}
+
+func TestCleanFocus(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+		wantErr        bool
+	}{
+		{"trims", "  focus  ", "focus", false},
+		{"keeps newlines and tabs", "a\n\tb", "a\n\tb", false},
+		{"drops control characters", "a\x00b\x1bc\x7f", "abc", false},
+		{"at the limit", strings.Repeat("é", maxFocusRunes), strings.Repeat("é", maxFocusRunes), false},
+		{"too long", strings.Repeat("x", maxFocusRunes+1), "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := cleanFocus(tc.in)
+			if tc.wantErr {
+				assert.ErrorContains(t, err, "too long")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// pins the additive migration: a table created before focus existed gains the column, and re-running is a no-op
+func TestAddColumnIfMissing(t *testing.T) {
+	d, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	d.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = d.Close() })
+	_, err = d.Exec(`CREATE TABLE review_runs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL)`)
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO review_runs (kind) VALUES ('pr')`)
+	require.NoError(t, err)
+
+	require.NoError(t, addColumnIfMissing(d, "review_runs", "focus", "TEXT NOT NULL DEFAULT ''"))
+	require.NoError(t, addColumnIfMissing(d, "review_runs", "focus", "TEXT NOT NULL DEFAULT ''"))
+	var f string
+	require.NoError(t, d.QueryRow(`SELECT focus FROM review_runs`).Scan(&f))
+	assert.Equal(t, "", f)
+
+	_ = d.Close()
+	assert.Error(t, addColumnIfMissing(d, "review_runs", "x", "TEXT"))
+}
+
+func TestValidateReviewReq_FocusTooLong(t *testing.T) {
+	_, err := validateReviewReq(reviewStartReq{Repo: "a/b", PR: 1, Focus: strings.Repeat("x", maxFocusRunes+1)})
+	assert.ErrorContains(t, err, "too long")
+}

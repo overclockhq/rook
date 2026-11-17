@@ -195,7 +195,8 @@
     var sub = pill + (author ? '<span>@' + c.esc(author) + "</span>" : "") + (extra ? "<span>" + c.esc(extra) + "</span>" : "") + (ts ? '<span class="gh-ago" data-ts="' + ts + '">' + c.esc(c.ago(ts, c.now())) + "</span>" : "");
     var acts = "";
     if (kind === "prs") {
-      acts += '<button class="btn sm" data-act="review">' + c.icon.review + 'Review</button>' + '<button class="btn sm" data-act="work">Work</button>';
+      acts += '<button class="btn sm" data-act="team" title="tech-lead + finding-verifier, read-only (Reviews page)">' + c.icon.review + 'Team review</button>' +
+        '<button class="btn sm" data-act="review" title="Open an agent session that reviews this PR">Review in session</button>' + '<button class="btn sm" data-act="work">Work</button>';
       acts += gh.allowWrite
         ? '<button class="btn sm" data-act="merge" title="Squash-merge #' + c.esc(it.number) + '">Merge</button>'
         : '<button class="btn sm" data-act="merge" disabled title="Turn on ‘Allow write actions’ in Settings to merge">Merge</button>';
@@ -226,6 +227,7 @@
           var a = b.dataset.act;
           if (a === "open") { if (it && it.url) window.open(it.url, "_blank"); }
           else if (a === "review") handToAgent(it, kind, "review");
+          else if (a === "team") { if (gh.ctx.openView) gh.ctx.openView("reviews", { repo: gh.repo, pr: it.number }); }
           else if (a === "merge") mergePR(it);
           else handToAgent(it, kind, "work");
         });
