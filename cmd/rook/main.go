@@ -25,7 +25,7 @@ var webFS embed.FS
 const maxToolsPerSession = 40
 
 // appVersion is bumped with each asset change; the client force-reloads on mismatch.
-const appVersion = "113"
+const appVersion = "119"
 
 // version is the released build version, injected at build time via ldflags
 // (-X main.version=...). "dev" for a plain `go build` / source run.
@@ -48,9 +48,18 @@ func main() {
 	// the extra metrics server (this is a loopback single-user tool).
 	os.Setenv("HTTP_PORT", port)
 	os.Setenv("METRICS_PORT", "0")
+	// GoFr answers CORS with "*" by default; rook's UI is same-origin and needs none.
+	_ = os.Setenv("ACCESS_CONTROL_ALLOW_ORIGIN", "http://127.0.0.1:"+port)
 
 	if err := initDB(); err != nil {
 		log.Printf("summary store disabled: %v", err)
+	}
+	if err := migrateReviewRuns(db); err != nil {
+		log.Printf("review runs store disabled: %v", err)
+	}
+	stopReviewsOnSignal()
+	if err := refreshHookScript(); err != nil {
+		log.Printf("hook bridge refresh failed: %v", err)
 	}
 	loadGraphs() // restore checkpointed task graphs so runs survive a restart
 	if *notifyOn {
@@ -66,6 +75,7 @@ func main() {
 	// Enforce loopback-only (or token for remote) + no-store caching at the app
 	// layer — GoFr binds all interfaces, so the guard is what keeps rook local.
 	app.UseMiddleware(accessGuard(*token))
+	app.UseMiddleware(sameOriginGuard(port, *token != "")) // before the terminal socket and every API route
 	app.UseMiddleware(termWSMiddleware) // intercept /ws/term for the interactive PTY bridge
 	app.UseMiddleware(noCache)
 
@@ -75,7 +85,7 @@ func main() {
 	app.GET("/operator.html", staticHandler("operator.html", "text/html; charset=utf-8"))
 	app.GET("/operator.css", staticHandler("operator.css", "text/css; charset=utf-8"))
 	app.GET("/operator.js", staticHandler("operator.js", "text/javascript; charset=utf-8"))
-	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications"} {
+	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph", "notifications", "loops", "kit", "reviews", "guardrails", "system"} {
 		name := "operator-" + v + ".js"
 		app.GET("/"+name, staticHandler(name, "text/javascript; charset=utf-8"))
 	}
@@ -96,6 +106,7 @@ func main() {
 	app.GET("/vendor/fonts/GeistMono-Regular.woff2", staticHandler("vendor/fonts/GeistMono-Regular.woff2", "font/woff2"))
 	app.GET("/vendor/fonts/GeistMono-Medium.woff2", staticHandler("vendor/fonts/GeistMono-Medium.woff2", "font/woff2"))
 	app.GET("/board.js", staticHandler("board.js", "text/javascript; charset=utf-8"))
+	app.GET("/guide.js", staticHandler("guide.js", "text/javascript; charset=utf-8"))
 	app.GET("/board.css", staticHandler("board.css", "text/css; charset=utf-8"))
 	app.GET("/charts.js", staticHandler("charts.js", "text/javascript; charset=utf-8"))
 	app.GET("/charts.css", staticHandler("charts.css", "text/css; charset=utf-8"))
@@ -113,6 +124,9 @@ func main() {
 	app.POST("/api/reflect", handleReflect)
 	app.POST("/api/devserver/stop", handleStopDevServer)
 	app.GET("/api/logs", handleLogs)
+	app.GET("/api/prboard", handlePRBoard)
+	app.GET("/api/system", handleSystem)
+	app.POST("/api/system/kill", handleSystemKill)
 	app.POST("/api/respond", handleRespond)
 	app.POST("/api/spawn", handleSpawn)
 	app.POST("/api/kill", handleKill)
@@ -139,13 +153,17 @@ func main() {
 	app.GET("/api/claude-activity", handleClaudeActivity)
 	app.GET("/api/repos", handleRepos)
 	app.GET("/api/diff", handleDiff)
-	app.POST("/api/hook", handleHook)
+	app.POST("/api/hook", skipReviewStops(handleHook))
 	app.GET("/api/hooks/events", handleHookEvents)
 	app.GET("/api/hooks/status", handleHooksStatus)
 	app.POST("/api/hooks/install", handleHooksInstall)
 	app.POST("/api/hooks/uninstall", handleHooksUninstall)
 	app.POST("/api/review", handleReview)
 	app.POST("/api/verify", handleVerify)
+	app.POST("/api/reviews", handleReviewStart)
+	app.GET("/api/reviews", handleReviewList)
+	app.GET("/api/reviews/{id}", handleReviewGet)
+	app.POST("/api/reviews/{id}/cancel", handleReviewCancel)
 	app.POST("/api/chain", handleChainCreate)
 	app.GET("/api/chains", handleChains)
 	app.POST("/api/chain/advance", handleChainAdvance)
@@ -171,6 +189,21 @@ func main() {
 	app.GET("/api/github/prs", handleGHPRs)
 	app.GET("/api/github/pr", handleGHPRDetail)
 	app.GET("/api/github/issue", handleGHIssueDetail)
+	app.GET("/api/loops", handleLoops)
+	app.GET("/api/loops/log", handleLoopLog)
+	app.POST("/api/loops/start", handleLoopStart)
+	app.POST("/api/loops/stop", handleLoopStop)
+	app.GET("/api/kit", handleKit)
+	app.GET("/api/kit/file", handleKitFile)
+	app.GET("/api/kit/audit", handleKitAuditGet)
+	app.POST("/api/kit/audit", handleKitAuditRun)
+	app.GET("/api/guardrails", handleGuardrails)
+	app.GET("/api/guardrails/gate", handleGateStatus)
+	app.POST("/api/guardrails/gate", handleGateRun)
+	app.POST("/api/guardrails/gate-toggle", handleGateToggle)
+	app.GET("/api/guardrails/selftest", handleSelftestStatus)
+	app.POST("/api/guardrails/selftest", handleSelftestRun)
+	app.GET("/api/guardrails/brief", handleBrief)
 
 	url := "http://127.0.0.1:" + port + "/"
 	log.Printf("rook %s — open %s", version, url)

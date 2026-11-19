@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"bytes"
 	"bufio"
 	"encoding/json"
 	"os"
@@ -62,6 +64,7 @@ type Session struct {
 	SpawnedByRook bool     `json:"spawnedByRook"` // rook launched this agent (vs started by hand in a terminal)
 	ToolCalls   []ToolCall `json:"toolCalls"`   // most recent first
 	Health      *Health    `json:"health,omitempty"` // watchdog assessment (nil if healthy)
+	Goal        *SessionGoal `json:"goal,omitempty"` // a /goal running in this session
 }
 
 // ToolCall is a single tool invocation summarized for humans.
@@ -134,6 +137,60 @@ type State struct {
 	Env        Environment   `json:"env"`
 }
 
+// SessionGoal is a /goal running inside a session: Claude keeps working until
+// the condition holds, and a Stop hook checks it each time Claude stops.
+type SessionGoal struct {
+	Condition   string `json:"condition"`
+	SetAt       int64  `json:"setAt"`
+	Met         bool   `json:"met"`
+	MetAt       int64  `json:"metAt,omitempty"`
+	Cleared     bool   `json:"cleared,omitempty"`
+	CheckIns    int    `json:"checkIns"`              // rounds the condition was checked and not yet met
+	LastCheckIn int64  `json:"lastCheckIn,omitempty"`
+	LastNote    string `json:"lastNote,omitempty"` // first line of the latest check-in, condition removed
+}
+
+// trackGoal updates p.goal from one transcript line. /goal leaves a
+// goal_status attachment when set (and when met) and a "Goal check-in: «…»"
+// user message each round it is still unmet.
+func trackGoal(p *parsedTranscript, tl *transcriptLine, ts int64) {
+	if a := tl.Attachment; a != nil && a.Type == "goal_status" {
+		if a.Condition != "" && (p.goal == nil || p.goal.Condition != a.Condition || p.goal.Met || p.goal.Cleared) {
+			p.goal = &SessionGoal{Condition: a.Condition, SetAt: ts}
+		}
+		if a.Met && p.goal != nil {
+			p.goal.Met, p.goal.MetAt = true, ts
+		}
+		return
+	}
+	if tl.Type != "user" || tl.Message == nil || p.goal == nil {
+		return
+	}
+	var text string
+	if json.Unmarshal(tl.Message.Content, &text) != nil {
+		return
+	}
+	switch {
+	case strings.HasPrefix(text, "Goal check-in"):
+		p.goal.CheckIns++
+		p.goal.LastCheckIn = ts
+		note := text
+		if i := strings.Index(note, "»"); i >= 0 {
+			note = note[i+len("»"):]
+		}
+		if i := strings.IndexByte(note, '\n'); i >= 0 {
+			note = note[:i]
+		}
+		note = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(note), ":"))
+		note = strings.TrimPrefix(strings.TrimPrefix(note, "is still active, and "), "is still active")
+		p.goal.LastNote = strings.TrimSpace(note)
+	case strings.HasPrefix(text, "Goal cleared"), strings.HasPrefix(text, "Goal removed"):
+		p.goal.Cleared = true
+	case strings.HasPrefix(text, "Goal met"), strings.HasPrefix(text, "Goal achieved"):
+		p.goal.Met, p.goal.MetAt = true, ts
+	}
+}
+
 // ---------- transcript parsing (mtime-cached) ----------
 
 // usageEvent is one assistant message's token accounting.
@@ -161,41 +218,57 @@ type parsedTranscript struct {
 	hasPending   bool
 	tokensTotal  int64
 	contextTokens int64 // input+cacheRead+cacheWrite of the most recent turn = current window fill
+	goal          *SessionGoal // latest /goal set in this session, if any
 }
 
-type cacheEntry struct {
-	mtime  int64
-	size   int64
-	parsed *parsedTranscript
+// transcriptCache holds one incremental parser per transcript. Live sessions
+// append to their transcript every few seconds, and transcripts reach hundreds
+// of MB, so re-reading a file from the start on every change pins the CPU and
+// stalls /api/state. Instead each parser remembers how far it has read and
+// consumes only the complete lines appended since.
+type transcriptCache struct {
+	mu       sync.Mutex // one parse at a time per file; concurrent callers wait
+	info     os.FileInfo
+	offset   int64 // bytes consumed (always just past a newline)
+	st       *transcriptState
+	snapshot *parsedTranscript
 }
 
 var (
 	cacheMu sync.Mutex
-	cache   = map[string]cacheEntry{}
+	cache   = map[string]*transcriptCache{}
 )
 
-// parseTranscript reads a single transcript, caching by (mtime,size).
+// parseTranscript returns the parsed state of one transcript, reading only what
+// was appended since the last call when the file merely grew.
 func parseTranscript(path string) *parsedTranscript {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return nil
 	}
-	mt := fi.ModTime().UnixNano()
-	sz := fi.Size()
-
 	cacheMu.Lock()
-	if e, ok := cache[path]; ok && e.mtime == mt && e.size == sz {
-		cacheMu.Unlock()
-		return e.parsed
+	e := cache[path]
+	if e == nil {
+		e = &transcriptCache{}
+		cache[path] = e
 	}
 	cacheMu.Unlock()
 
-	p := readTranscript(path)
-
-	cacheMu.Lock()
-	cache[path] = cacheEntry{mtime: mt, size: sz, parsed: p}
-	cacheMu.Unlock()
-	return p
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.snapshot != nil && e.info != nil && os.SameFile(e.info, fi) {
+		if fi.Size() == e.info.Size() && fi.ModTime().Equal(e.info.ModTime()) {
+			return e.snapshot
+		}
+	}
+	// Replaced (rotated, rewritten) or shrank: start over.
+	if e.info == nil || !os.SameFile(e.info, fi) || fi.Size() < e.offset {
+		e.st, e.offset = newTranscriptState(), 0
+	}
+	e.offset = e.st.consumeFrom(path, e.offset)
+	e.info = fi
+	e.snapshot = e.st.snapshot()
+	return e.snapshot
 }
 
 // transcriptLine models the subset of fields we read from each JSONL line.
@@ -205,6 +278,11 @@ type transcriptLine struct {
 	LastPrompt    json.RawMessage `json:"lastPrompt"`
 	Timestamp     string          `json:"timestamp"`
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	Attachment    *struct {
+		Type      string `json:"type"`
+		Condition string `json:"condition"`
+		Met       bool   `json:"met"`
+	} `json:"attachment"`
 	Message       *struct {
 		Model   string `json:"model"`
 		Content json.RawMessage `json:"content"`
@@ -217,98 +295,141 @@ type transcriptLine struct {
 	} `json:"message"`
 }
 
+// transcriptState is a resumable parse of one transcript: feed it lines in
+// order and take snapshots at any point.
+type transcriptState struct {
+	p       *parsedTranscript
+	toolIdx map[string]int // tool_use id -> index in p.tools, to back-fill dur/error
+}
+
+func newTranscriptState() *transcriptState {
+	return &transcriptState{p: &parsedTranscript{}, toolIdx: map[string]int{}}
+}
+
+// readTranscript parses a whole transcript from the start.
 func readTranscript(path string) *parsedTranscript {
+	st := newTranscriptState()
+	st.consumeFrom(path, 0)
+	return st.snapshot()
+}
+
+// consumeFrom reads the complete lines of path starting at offset and returns
+// the offset just past the last newline read. A trailing partial line (still
+// being written) is left for the next call.
+func (st *transcriptState) consumeFrom(path string, offset int64) int64 {
 	f, err := os.Open(path)
 	if err != nil {
-		return &parsedTranscript{}
+		return offset
 	}
 	defer f.Close()
-
-	p := &parsedTranscript{}
-	toolIdx := map[string]int{} // tool_use id -> index in p.tools, to back-fill dur/error
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // allow long lines
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var tl transcriptLine
-		if err := json.Unmarshal(line, &tl); err != nil {
-			continue
-		}
-		if tl.AITitle != "" {
-			p.title = tl.AITitle
-		}
-		if len(tl.LastPrompt) > 0 {
-			if s := lastPromptText(tl.LastPrompt); s != "" {
-				p.lastPrompt = s
-			}
-		}
-		// a tool result means the previously-issued tool completed (not pending)
-		if len(tl.ToolUseResult) > 0 {
-			p.hasPending = false
-		}
-		// count tool_result blocks + errors (these live on user-role lines) so the
-		// quality score can use the tool-call error rate.
-		if tl.Message != nil {
-			tr, te := countToolResults(tl.Message.Content)
-			p.toolResults += tr
-			p.toolErrors += te
-			// correlate each result back to its tool_use for real duration + error
-			rts := parseTS(tl.Timestamp)
-			for _, r := range parseToolResults(tl.Message.Content) {
-				if idx, ok := toolIdx[r.ToolUseID]; ok {
-					if rts > 0 && p.tools[idx].Timestamp > 0 && rts >= p.tools[idx].Timestamp {
-						p.tools[idx].DurMs = rts - p.tools[idx].Timestamp
-					}
-					p.tools[idx].IsError = r.IsError
-				}
-			}
-		}
-		if tl.Type != "assistant" || tl.Message == nil {
-			continue
-		}
-		ts := parseTS(tl.Timestamp)
-		if tl.Message.Model != "" {
-			p.model = tl.Message.Model
-		}
-		if u := tl.Message.Usage; u != nil {
-			ev := usageEvent{
-				tsMs:       ts,
-				input:      u.InputTokens,
-				output:     u.OutputTokens,
-				cacheRead:  u.CacheReadInputTokens,
-				cacheWrite: u.CacheCreationInputTokens,
-			}
-			p.usage = append(p.usage, ev)
-			p.tokensTotal += u.InputTokens + u.OutputTokens
-			// each assistant turn reports the whole context it read; the last one
-			// wins → current window fill.
-			p.contextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
-		}
-		// extract tool_use blocks + latest assistant text + changed files
-		tcs, txt, changed, lastFull := extractContent(tl.Message.Content, ts)
-		base := len(p.tools)
-		p.tools = append(p.tools, tcs...)
-		for i, tc := range tcs {
-			if tc.ID != "" {
-				toolIdx[tc.ID] = base + i
-			}
-		}
-		if len(tcs) > 0 {
-			// newest tool_use is pending until a toolUseResult line clears it
-			p.pendingTool = tcs[len(tcs)-1]
-			p.pendingFull = lastFull
-			p.hasPending = true
-		}
-		if txt != "" {
-			p.lastText = txt
-		}
-		p.changedFiles = append(p.changedFiles, changed...)
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return offset
 	}
-	p.changedFiles = dedupeKeepLast(p.changedFiles)
-	return p
+	r := bufio.NewReaderSize(f, 256*1024)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			return offset // EOF: whatever is left has no newline yet
+		}
+		offset += int64(len(line))
+		st.consume(bytes.TrimRight(line, "\r\n"))
+	}
+}
+
+// consume applies one JSONL line.
+func (st *transcriptState) consume(line []byte) {
+	if len(line) == 0 {
+		return
+	}
+	var tl transcriptLine
+	if err := json.Unmarshal(line, &tl); err != nil {
+		return
+	}
+	p, toolIdx := st.p, st.toolIdx
+	if tl.AITitle != "" {
+		p.title = tl.AITitle
+	}
+	if len(tl.LastPrompt) > 0 {
+		if s := lastPromptText(tl.LastPrompt); s != "" {
+			p.lastPrompt = s
+		}
+	}
+	// a tool result means the previously-issued tool completed (not pending)
+	if len(tl.ToolUseResult) > 0 {
+		p.hasPending = false
+	}
+	// count tool_result blocks + errors (these live on user-role lines) so the
+	// quality score can use the tool-call error rate.
+	if tl.Message != nil {
+		tr, te := countToolResults(tl.Message.Content)
+		p.toolResults += tr
+		p.toolErrors += te
+		// correlate each result back to its tool_use for real duration + error
+		rts := parseTS(tl.Timestamp)
+		for _, r := range parseToolResults(tl.Message.Content) {
+			if idx, ok := toolIdx[r.ToolUseID]; ok {
+				if rts > 0 && p.tools[idx].Timestamp > 0 && rts >= p.tools[idx].Timestamp {
+					p.tools[idx].DurMs = rts - p.tools[idx].Timestamp
+				}
+				p.tools[idx].IsError = r.IsError
+			}
+		}
+	}
+	trackGoal(p, &tl, parseTS(tl.Timestamp))
+	if tl.Type != "assistant" || tl.Message == nil {
+		return
+	}
+	ts := parseTS(tl.Timestamp)
+	if tl.Message.Model != "" {
+		p.model = tl.Message.Model
+	}
+	if u := tl.Message.Usage; u != nil {
+		ev := usageEvent{
+			tsMs:       ts,
+			input:      u.InputTokens,
+			output:     u.OutputTokens,
+			cacheRead:  u.CacheReadInputTokens,
+			cacheWrite: u.CacheCreationInputTokens,
+		}
+		p.usage = append(p.usage, ev)
+		p.tokensTotal += u.InputTokens + u.OutputTokens
+		// each assistant turn reports the whole context it read; the last one
+		// wins → current window fill.
+		p.contextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+	}
+	// extract tool_use blocks + latest assistant text + changed files
+	tcs, txt, changed, lastFull := extractContent(tl.Message.Content, ts)
+	base := len(p.tools)
+	p.tools = append(p.tools, tcs...)
+	for i, tc := range tcs {
+		if tc.ID != "" {
+			toolIdx[tc.ID] = base + i
+		}
+	}
+	if len(tcs) > 0 {
+		// newest tool_use is pending until a toolUseResult line clears it
+		p.pendingTool = tcs[len(tcs)-1]
+		p.pendingFull = lastFull
+		p.hasPending = true
+	}
+	if txt != "" {
+		p.lastText = txt
+	}
+	p.changedFiles = append(p.changedFiles, changed...)
+}
+
+// snapshot returns a copy callers can keep while parsing continues: the slices
+// are copied because later lines append to them and back-fill tool durations.
+func (st *transcriptState) snapshot() *parsedTranscript {
+	cp := *st.p
+	cp.usage = append([]usageEvent(nil), st.p.usage...)
+	cp.tools = append([]ToolCall(nil), st.p.tools...)
+	cp.changedFiles = dedupeKeepLast(append([]string(nil), st.p.changedFiles...))
+	if st.p.goal != nil {
+		g := *st.p.goal
+		cp.goal = &g
+	}
+	return &cp
 }
 
 // dedupeKeepLast removes earlier duplicates, keeping the last occurrence order.
@@ -856,6 +977,7 @@ func ScanSessions(maxTools int) []Session {
 				s.ToolResults = p.toolResults
 				s.ToolErrors = p.toolErrors
 				s.ChangedFiles = p.changedFiles
+				s.Goal = p.goal
 				if s.Status == "waiting" {
 					s.Asking = describeWaiting(p)
 				}
@@ -891,8 +1013,34 @@ func ScanSessions(maxTools int) []Session {
 		}
 		out = append(out, s)
 	}
+	out = append(out, missingSpawns(out, paneSessions, spawned)...)
 	sortSessions(out)
 	return out
+}
+
+// missingSpawns covers agents that hold a tmux name but have not reported a
+// session file yet. It reuses the pane map the scan already has, and only pays
+// for a tmux call when a spawned name is genuinely unaccounted for.
+func missingSpawns(scanned []Session, paneSessions map[string]string, spawned map[string]bool) []Session {
+	if len(spawned) == 0 || len(paneSessions) == 0 {
+		return nil
+	}
+	covered := make(map[string]bool, len(scanned))
+	for _, s := range scanned {
+		if s.TmuxPane != "" {
+			covered[paneSessions[s.TmuxPane]] = true
+		}
+	}
+	missing := map[string]bool{}
+	for _, name := range paneSessions {
+		if spawned[name] && !covered[name] {
+			missing[name] = true
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return orphanSpawns(liveTmuxSessions(missing), covered, spawned, time.Now().UnixMilli())
 }
 
 // sortSessions orders sessions alive-first, then by most recent activity.

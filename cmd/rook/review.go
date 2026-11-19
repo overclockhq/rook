@@ -28,6 +28,8 @@ var reviewLenses = []string{
 	"Focus especially on correctness/bugs and security.",
 	"Focus especially on missing tests, edge cases, and needless complexity (call out simpler equivalents).",
 	"Focus especially on API/contract changes, backward compatibility, and error handling.",
+	"Focus especially on whether this code needed to be written at all: read the pre-change version, hunt the repo for an existing helper that already does it, and judge whether the change fits the surrounding design.",
+	"Focus especially on resource cost: allocations and copies in hot paths, per-item queries and network calls, unbounded growth, new goroutines/timers/watchers, and work moved into a request path.",
 }
 
 // reviewPrompt is the read-only reviewer prompt pointed at a worktree's changes.
@@ -38,21 +40,39 @@ func reviewPrompt(lens, base string) string {
 	// changes, `git diff` alone is empty and the reviewer would SHIP on nothing —
 	// so review against the fork base when we know it.
 	how := "run `git diff` and `git diff --staged` and `git status`"
+	pre := "`git show HEAD:<file>`"
 	if base != "" && base != "HEAD" {
 		how = "run `git diff " + base + "...HEAD` (committed changes since the fork point) AND `git diff` and `git diff --staged` (uncommitted) and `git status`"
+		pre = "`git show " + base + ":<file>`"
 	}
 	lines := []string{
 		"You are a strict, read-only code reviewer. Review ONLY the changes in this working tree — " + how + ". If the diff is empty, say so explicitly rather than approving.",
-		"Report only real defects INTRODUCED by these changes, most severe first, across these classes: Correctness/bugs, Security, Missing tests/edge cases, API/backward-compatibility. Also flag newly-introduced violations of the repo's CLAUDE.md / AGENTS.md conventions.",
+
+		// --- claim discipline ---------------------------------------------
+		// Guessing is the failure mode that makes a review actively harmful: a
+		// confident sentence about live data nobody checked is worse than no
+		// review. Every asserted fact must name how the reviewer knows it.
+		"CLAIM DISCIPLINE — before asserting anything as fact, name how you know it. Every claim is one of three kinds: a CODE claim (\"this function drops the field\", \"X is the only caller\") whose source is the file you read or the grep you ran — cite it; a RUNTIME claim about live state (\"today's records carry this field\", \"this never happens in practice\") whose only valid source is querying the running system or a fixture/migration that provably produced that state — a code comment, a variable name, a doc, or a PR description is NOT a source for a runtime claim; or a RECOLLECTION (\"I think this predates X\"), which is not a source at all.",
+		"If a claim is load-bearing — your recommendation changes if it is false — verify it or do not make the recommendation. No exceptions for claims that feel obviously true; those are exactly the ones that go unchecked. Anything you could not verify must be stated as unverified next to the claim (\"unverified — check X before acting on this\"), never as a confident parenthetical.",
+		"Before you answer, re-read your own review for two statements about the same fact that disagree. If you derived something from the diff and then contradicted it from memory, the diff wins.",
+		"If the change claims to be self-healing, self-deploying, or to backfill existing data: reading the predicate is NOT the check. Enumerate what actually exists today and confirm each real record passes EVERY clause of the gate — or mark the claim unverified.",
+
+		// --- what to report -----------------------------------------------
+		"Report only real defects INTRODUCED by these changes, most severe first, across these classes: Correctness/bugs; Security; Missing tests/edge cases; API/backward-compatibility; Necessity & reuse; Context fit; Resource cost. Also flag newly-introduced violations of the repo's CLAUDE.md / AGENTS.md conventions.",
+		"Necessity & reuse — before accepting new code, grep the repo for an existing function, helper, or pattern that ALREADY does this. If one exists, say so with its file:line and treat the duplicate as a finding. Also ask whether the change was needed at all: does it solve a problem the code actually had, or restate one already handled elsewhere?",
+		"Context fit — read the pre-change version of each changed function (" + pre + ") before judging it. State what the old code did and what invariant or case it was handling, then say whether the new code preserves it. A case the old code handled and the new code silently drops is a Critical finding. Changes that fight the surrounding design (a second source of truth, a bypassed layer, logic landing in the wrong package) belong here.",
+		"Resource cost — estimate what the change costs at runtime and say so concretely: allocations/copies added to a hot path, per-item queries or network calls where one batched call would do (N+1), work moved into a request path or a loop, unbounded slices/maps/caches with no eviction, new goroutines/timers/watchers/subscriptions and whether they are ever stopped, and any change in complexity (O(n) → O(n²)). Name the input size at which it starts to hurt. If the cost is negligible, say nothing.",
+
+		// --- gates ----------------------------------------------------------
 		"Do NOT comment on style, naming, or formatting. Do NOT flag pre-existing issues or anything a linter would catch. (Pointing out a genuinely simpler equivalent for new code is fine — that is not style.)",
 		"Only report a finding if you are confident it is a real problem (>=80/100) AND you can name the concrete input or scenario that makes it fail. If you cannot, drop it — no speculative or padding comments. If a class has nothing, don't mention it.",
-		"Format each finding as one entry: `[Critical|High|Medium] file:line` — what's wrong (one line), why it breaks (the failing case), then a concrete fix.",
+		"Format each finding as one entry: `[Critical|High|Medium] file:line` — what's wrong (one line), why it breaks (the failing case), the source you verified it from (file you read / grep or command you ran), then a concrete fix. If any part of it is unverified, end the entry with `unverified: <what you could not check>`.",
 	}
 	if lens != "" {
 		lines = append(lines, lens)
 	}
 	lines = append(lines,
-		"Keep the whole review DISTILLED: at most ~25 lines / ~1500 tokens — a summary a human can act on, not a transcript. Skip trivia.",
+		"Keep the whole review DISTILLED: at most ~35 lines / ~2000 tokens — a summary a human can act on, not a transcript. Skip trivia.",
 		"Do NOT modify any files, do NOT commit, do NOT run destructive commands. Lead with a one-line VERDICT: SHIP / FIX-FIRST / BLOCK (BLOCK only if there is a Critical finding) and a one-sentence reason.",
 	)
 	return strings.Join(lines, "\n")

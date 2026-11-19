@@ -101,8 +101,8 @@ button { cursor: pointer; background: none; border: none; }
 .op-brand {
   width: 34px; height: 34px; border-radius: 9px;
   display: grid; place-items: center; margin-bottom: 10px;
-  background: linear-gradient(150deg, #f2eee6, #d9d4c8);
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.15);
+  background: linear-gradient(150deg, #2b2724, #1b1917);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.09);
 }
 .op-brand svg { width: 22px; height: 22px; }
 .op-rail-btn {
@@ -223,6 +223,7 @@ a.op-rail-btn { text-decoration: none; }
 .pill.waiting { background: var(--waiting-soft); color: var(--waiting); }
 .pill.idle { background: var(--surface-3); color: var(--ink-3); }
 .pill.dead { background: var(--surface-3); color: var(--ink-4); }
+.pill.starting { background: var(--busy-soft); color: var(--busy); }
 .pill.done { background: var(--ok-soft); color: var(--ok); }
 
 .btn { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 13px; border-radius: 8px; font-size: 12.5px; font-weight: 500; color: var(--ink-2); border: 1px solid var(--line); background: var(--surface-2); transition: all .12s; }
@@ -271,6 +272,7 @@ a.op-rail-btn { text-decoration: none; }
 @media (max-width: 1100px) { .ov-stats { grid-template-columns: repeat(2, 1fr); } }
 .ov-stat { background: var(--surface); padding: 12px 14px; }
 .ov-stat.full { grid-column: 1 / -1; }
+.ov-stat.pad { background: var(--surface); }
 .ov-stat .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-4); font-weight: 500; }
 .ov-stat .v { font-size: 14px; color: var(--ink); margin-top: 3px; font-family: var(--mono); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov-stat .v.wrap { white-space: normal; word-break: break-all; font-size: 12px; }
@@ -352,7 +354,7 @@ a.op-rail-btn { text-decoration: none; }
 .pal-item .pi-title mark { background: transparent; color: var(--accent); font-weight: 700; }
 .pal-item .pi-main { flex: 1; min-width: 0; }
 .pal-item .pi-title { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pal-item .pi-sub { font-size: 11px; color: var(--ink-4); font-family: var(--mono); }
+.pal-item .pi-sub { font-size: 11px; color: var(--ink-4); font-family: var(--mono); margin-left: 9px; }
 .pal-item .pi-key { font-family: var(--mono); font-size: 11px; color: var(--ink-4); }
 .pal-item.act { background: var(--surface-3); color: var(--ink); }
 .pal-item svg { width: 16px; height: 16px; opacity: .8; }
@@ -427,7 +429,7 @@ select.set-in { cursor: pointer; }
 .ins-mtable .mn { font-family: var(--mono); color: var(--ink); }
 .ins-mtable .n, .ins-rtable .n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-2); padding-left: 16px; white-space: nowrap; }
 .ins-mtable .cost, .ins-rtable .cost { color: var(--coral); font-weight: 500; }
-.ins-rtable .rk-num { color: var(--ink-4); font-family: var(--mono); font-size: 11px; width: 24px; }
+.ins-rtable .rk-num { color: var(--ink-4); font-family: var(--mono); font-size: 11px; width: 30px; text-align: right; padding-right: 10px; font-variant-numeric: tabular-nums; }
 .ins-rtable .rt { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0; width: 100%; padding-right: 14px; }
 .ins-rtable .rm { font-family: var(--mono); font-size: 11px; color: var(--ink-4); padding-right: 16px; white-space: nowrap; }
 .ins-rtable tr:first-child td { border-top: none; }
@@ -656,3 +658,20 @@ select.set-in { cursor: pointer; }
 
 /* per-session Quality & cost card on the overview (reuses .q-* breakdown styles) */
 .ovq-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; background: var(--surface); }
+
+/* session log viewer (Logs button) */
+.op-modal-ov.lg-wide .op-modal { width: min(1040px, 94vw); }
+.lg-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.lg-note { font-size: 12px; color: var(--ink-4); font-family: var(--mono); }
+.lg-body { max-height: 62vh; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.lg-row { display: grid; grid-template-columns: 74px 1fr; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.lg-row:last-child { border-bottom: none; }
+.lg-meta { display: flex; flex-direction: column; gap: 2px; }
+.lg-t { font-size: 11px; color: var(--ink-4); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.lg-role { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-4); font-weight: 600; }
+.lg-user .lg-role { color: var(--accent); }
+.lg-blocks { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.lg-b { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.lg-b.lg-tool { font-family: var(--mono); font-size: 11.5px; color: var(--busy); }
+.lg-b.lg-result { font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); max-height: 88px; overflow: hidden; }
+.lg-b.lg-think { color: var(--ink-4); font-style: italic; }

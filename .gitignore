@@ -16,3 +16,6 @@ docs/screenshot-home.png
 *.test
 LAUNCH_PLAN.md
 notes/
+
+# Swift build products
+mac/Peek/.build/

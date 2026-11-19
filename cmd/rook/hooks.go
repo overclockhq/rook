@@ -247,6 +247,16 @@ const hookScriptTmpl = `#!/bin/sh
 # is never silently OFF: the old script exited 0 with no output on failure,
 # which Claude Code reads as "allow" (fail-open).
 payload=$(cat)
+# Headless review agents started by rook carry ROOK_REVIEW_RUN. Only their
+# PreToolUse events go to rook (the danger gate); Stop and the rest would fire
+# auto-review, auto-verify or notifications on the user's checkout, and must not
+# depend on rook still remembering the run (it may have restarted).
+if [ -n "$ROOK_REVIEW_RUN" ]; then
+  case "$payload" in
+    *'"hook_event_name":"PreToolUse"'*|*'"hook_event_name": "PreToolUse"'*) ;;
+    *) exit 0 ;;
+  esac
+fi
 resp=$(printf '%s' "$payload" | curl -s -m 5 -X POST "http://127.0.0.1:__PORT__/api/hook" \
   -H "Content-Type: application/json" --data-binary @- 2>/dev/null)
 if [ -n "$resp" ]; then
@@ -281,6 +291,21 @@ func writeHookScript() error {
 		return err
 	}
 	return os.WriteFile(hookScriptPath(), []byte(buildHookScript(portFromListenFlag())), 0o755)
+}
+
+// refreshHookScript rewrites an installed bridge script so it picks up template
+// fixes, but only when it already points at this rook's port: a second rook on
+// another port must not redirect the user's hooks to itself.
+func refreshHookScript() error {
+	cur, err := os.ReadFile(hookScriptPath())
+	if err != nil {
+		return nil // not installed
+	}
+	want := buildHookScript(portFromListenFlag())
+	if string(cur) == want || !strings.Contains(string(cur), fmt.Sprintf("127.0.0.1:%d/", portFromListenFlag())) {
+		return nil
+	}
+	return os.WriteFile(hookScriptPath(), []byte(want), 0o755)
 }
 
 // mergeHooksIntoSettings adds (add=true) or removes rook's hook entries in

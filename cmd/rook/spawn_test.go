@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,7 +83,8 @@ func TestSendInitialPrompt_WaitsForBoot(t *testing.T) {
 	if tmuxBin == "" {
 		t.Skip("tmux not available")
 	}
-	target := "rook_boottest"
+	// A per-run name: parallel test runs (other worktrees, CI shards) share one tmux server.
+	target := fmt.Sprintf("rook_boottest_%d_%d", os.Getpid(), time.Now().UnixNano())
 	_, _ = runTmux("kill-session", "-t", target)
 	// "boots" for ~3s (output keeps changing) then settles at a cat prompt.
 	if _, err := runTmux("new-session", "-d", "-s", target, "-x", "100", "-y", "30",

@@ -200,7 +200,7 @@ func handleGHPRs(ctx *gofr.Context) (any, error) {
 	}
 	return proxyJSON("pr", "list", "--repo", repo,
 		"--state", "open", "--limit", "60",
-		"--json", "number,title,author,isDraft,labels,assignees,reviewDecision,statusCheckRollup,updatedAt,url,additions,deletions")
+		"--json", "number,title,author,isDraft,labels,assignees,reviewDecision,statusCheckRollup,updatedAt,url,additions,deletions,headRefName")
 }
 
 func trimNL(s string) string {
